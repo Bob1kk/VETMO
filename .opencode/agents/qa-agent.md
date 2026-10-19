@@ -19,6 +19,29 @@ permissions:
   - action: shell
     resource: "mypy *"
     effect: allow
+
+  # добавлено build (координатором) для работы с py -m *
+  - action: shell
+    resource: "py -m uv *"
+    effect: allow
+  - action: shell
+    resource: "py -m pytest *"
+    effect: allow
+  - action: shell
+    resource: "py -m ruff *"
+    effect: allow
+  - action: shell
+    resource: "py -m mypy *"
+    effect: allow
+  - action: shell
+    resource: "py -m pyinstaller *"
+    effect: allow
+  - action: edit
+    resource: "pyproject.toml"
+    effect: allow
+  - action: shell
+    resource: "py *"
+    effect: allow
 ---
 
 # QA Agent — тестирование и валидация данных VETMO
