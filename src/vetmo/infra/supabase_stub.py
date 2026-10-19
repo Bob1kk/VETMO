@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.infra.config import Settings
+from vetmo.infra.proxy import system_proxy_url
 
 logger = logging.getLogger("vetmo.supabase")
 
@@ -23,7 +24,9 @@ class SupabaseClient:
     ) -> None:
         self._settings = settings
         self._sessionmaker = sessionmaker
-        self._http = http_client or httpx.Client(timeout=settings.http_timeout)
+        proxy_url = system_proxy_url()
+        proxy = httpx.Proxy(proxy_url) if proxy_url else None
+        self._http = http_client or httpx.Client(timeout=settings.http_timeout, proxy=proxy)
 
     def sync_meta_snapshot(self, limit: int = 50) -> dict[str, Any]:
         """Отправляет топ мета-снэпшоты; ошибки глотаются (best-effort)."""

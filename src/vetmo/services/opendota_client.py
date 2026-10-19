@@ -12,13 +12,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from vetmo.data.repositories.counter_repo import CounterRepository
 from vetmo.data.repositories.hero_repo import HeroRepository
+from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import Hero
+from vetmo.infra.proxy import system_proxy_url
 from vetmo.services.validator_service import ValidatorService
 
 logger = logging.getLogger("vetmo.opendota")
 
 _KEY_LAST_SYNC_HEROES = "last_sync_heroes"
+PATCH_PUBLIC_LADDER = "public-ladder"
 
 
 @dataclass
@@ -49,7 +52,9 @@ class OpenDotaClient:
         self._validator = validator
         self._engine = engine
         self._sessionmaker = sessionmaker
-        self._http = http_client or httpx.Client(timeout=settings.http_timeout)
+        proxy_url = system_proxy_url()
+        proxy = httpx.Proxy(proxy_url) if proxy_url else None
+        self._http = http_client or httpx.Client(timeout=settings.http_timeout, proxy=proxy)
         self._min_interval = 60.0 / max(1, int(settings.rate_limit_per_min))
         self._last_request_time = 0.0
         self.retry_delays: tuple[float, ...] = (0.5, 1.0, 2.0)
@@ -122,6 +127,19 @@ class OpenDotaClient:
             logger.warning("heroStats недоступен — offline, БД не тронута")
             return SyncResult(skipped=limit)
         data = data[:limit] if limit and limit > 0 else data
+
+        # Мета: heroStats несёт pub_pick/pub_win (публичный ранк_tracke~). Считаем
+        # win_rate = pub_win/pub_pick*100; pick_rate — относительная доля пиков ×10
+        # (сумма по всем героям ≈ 1000 ÷ 10 слотов матча), кап 100.
+        total_pub_pick = sum(
+            float(r.get("pub_pick") or 0) for r in data if isinstance(r, dict))
+        patch: int | None = None
+        if total_pub_pick > 0:
+            patch = MetaRepository.ensure_patch(
+                session, PATCH_PUBLIC_LADDER, datetime.now(UTC).replace(tzinfo=None),
+                "Бета-мета: pub_pick/pub_win из OpenDota heroStats",
+            )
+        meta_repo = MetaRepository(session)
         hero_repo = HeroRepository(self._sessionmaker())
         session = hero_repo._session  # noqa: SLF001 — sessionmaker создаёт здесь
         ok = quarantined = 0
@@ -145,6 +163,22 @@ class OpenDotaClient:
                     quarantined += 1
                     continue
                 hero_repo.upsert(hero)
+                if patch is not None:
+                    pub_pick = float(record.get("pub_pick") or 0)
+                    pub_win = float(record.get("pub_win") or 0)
+                    if pub_pick > 0:
+                        win_rate = round(100.0 * pub_win / pub_pick, 2)
+                        pick_rate = min(
+                            100.0, round(1000.0 * pub_pick / total_pub_pick, 2))
+                        meta_check = self._validator.validate_meta(
+                            {"win_rate": win_rate, "pick_rate": pick_rate})
+                        if meta_check.quarantined:
+                            logger.warning(
+                                "Мета героя %s в карантине: %s",
+                                hero.id, meta_check.reason,
+                            )
+                        else:
+                            meta_repo.upsert(patch, hero.id, win_rate, pick_rate)
                 ok += 1
             settings_repo.set(
                 _KEY_LAST_SYNC_HEROES, datetime.now(UTC).isoformat())
@@ -176,12 +210,17 @@ class OpenDotaClient:
 
     @staticmethod
     def _normalize_icon(raw: object) -> str | None:
-        """'//cdn/...' -> 'https://cdn/...'; пустое -> None."""
+        """'//cdn/...' -> 'https://cdn/...'; '/apps/...' -> cdn.dota2.com; пустое -> None."""
         if not raw:
             return None
         icon = str(raw).strip()
+        if not icon:
+            return None
         if icon.startswith("//"):
             return f"https:{icon}"
+        if icon.startswith("/"):
+            # Относительный путь OpenDota (icon/img в heroStats): '/apps/dota2/...'
+            return f"https://cdn.dota2.com{icon}"
         return icon
 
     # --- матчапы (контрпики) ---

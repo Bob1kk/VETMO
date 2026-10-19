@@ -9,6 +9,7 @@ from vetmo.data.models_orm import PatchORM
 from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.domain.models import Hero
 from vetmo.infra.config import Settings
+from vetmo.infra.proxy import system_proxy_url
 
 
 @dataclass
@@ -37,7 +38,9 @@ class NewsService:
     ) -> None:
         self._sessionmaker = sessionmaker
         self._settings = settings
-        self._http = http_client or httpx.Client(timeout=settings.http_timeout)
+        proxy_url = system_proxy_url()
+        proxy = httpx.Proxy(proxy_url) if proxy_url else None
+        self._http = http_client or httpx.Client(timeout=settings.http_timeout, proxy=proxy)
 
     def get_latest_patch_news(self, limit: int = 5) -> tuple[list[NewsItem], bool]:
         """(items, is_online): сеть не удалась -> offline fallback из БД."""

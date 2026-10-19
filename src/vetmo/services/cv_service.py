@@ -130,7 +130,10 @@ class CVService:
             return None
         target = self._icons_dir / f"{hero_id}.png"
         try:
-            response = httpx.get(url, timeout=10.0, follow_redirects=True)
+            from vetmo.infra.http_client import build_http_client
+
+            with build_http_client(timeout=httpx.Timeout(30.0)) as client:
+                response = client.get(url)
             response.raise_for_status()
             target.write_bytes(response.content)
         except Exception as exc:  # noqa: BLE001 — network must not crash

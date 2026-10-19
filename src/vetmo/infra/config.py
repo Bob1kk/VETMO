@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     db_url: str = "sqlite:///vetmo.db"
     log_file: str = "logs/vetmo.log"
-    http_timeout: float = 15.0
+    http_timeout: float = 45.0
     opendota_base_url: str = "https://api.opendota.com/api/"
     rate_limit_per_min: int = 60
     cache_ttl_hours: float = 24.0

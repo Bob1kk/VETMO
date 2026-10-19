@@ -21,7 +21,7 @@ def test_settings_defaults() -> None:
     assert s.log_level == "INFO"
     assert s.db_url == "sqlite:///vetmo.db"
     assert s.log_file == "logs/vetmo.log"
-    assert s.http_timeout == 15.0
+    assert s.http_timeout == 45.0
     assert s.opendota_base_url == "https://api.opendota.com/api/"
     assert s.rate_limit_per_min == 60
     assert s.cache_ttl_hours == 24.0
