@@ -34,8 +34,15 @@ a = Analysis(
     ["src/vetmo/main.py"],
     pathex=[ROOT, os.path.join(ROOT, "src")],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    # Миграции Alembic — data-файлы: в one-file бандле они распаковываются в
+    # _MEIPASS с сохранением структуры пакета (vetmo/data/migrations).
+    datas=[
+        (
+            os.path.join(ROOT, "src", "vetmo", "data", "migrations"),
+            os.path.join("vetmo", "data", "migrations"),
+        ),
+    ],
+    hiddenimports=["logging.config", "logging.handlers"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
