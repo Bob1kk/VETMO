@@ -122,3 +122,54 @@ def test_recommendations_without_priorities(db) -> None:
     recs = service.get_recommendations(2, limit=5)
     assert [h.id for h, _ in recs] == HEROES[:5]
     assert all(s == 0.0 for _, s in recs)
+
+
+def test_recommendations_position_fit(db) -> None:
+    """Ролевой фит влияет: Carry первый на pos 1 с 5.0, на pos 5 — 0.0."""
+    from vetmo.domain.models import Hero as H
+    _, sessionmaker = db
+    with sessionmaker() as session:
+        repo = HeroRepository(session)
+        repo.upsert(H(id=200, name="carry-hero", localized_name="Carry A",
+                      primary_attr="agi", attack_type="Melee",
+                      roles=["Carry", "Escape"], icon_url=None))
+        repo.upsert(H(id=201, name="hard-support-hero", localized_name="Support B",
+                      primary_attr="int", attack_type="Ranged",
+                      roles=["Hard Support"], icon_url=None))
+    service = DraftService(sessionmaker)
+    pos1 = dict((h.id, s) for h, s in service.get_recommendations(1, limit=10))
+    assert pos1[200] == 5.0   # фит 1.0 * вес 5.0
+    assert pos1[201] == 0.0   # hard_support не роль позиции 1
+    pos5 = dict((h.id, s) for h, s in service.get_recommendations(5, limit=10))
+    assert pos5[201] == 5.0   # 'Hard Support' — первичная роль pos 5
+    assert pos5[200] == 0.0   # carry не вылезает на позицию 5
+    # сортировка: carry впереди на pos1, саппорт впереди на pos5
+    assert service.get_recommendations(1, limit=10)[0][0].id == 200
+    assert service.get_recommendations(5, limit=10)[0][0].id == 201
+
+
+def test_recommendations_supporting_role_partial_fit(db) -> None:
+    """Поддерживающая роль даёт 0.6 * 5.0 = 3.0."""
+    from vetmo.domain.models import Hero as H
+    _, sessionmaker = db
+    with sessionmaker() as session:
+        HeroRepository(session).upsert(
+            H(id=202, name="durable-hero", localized_name="Durable C",
+              primary_attr="str", attack_type="Melee",
+              roles=["Durable"], icon_url=None))
+    service = DraftService(sessionmaker)
+    pos3 = dict((h.id, s) for h, s in service.get_recommendations(3, limit=10))
+    assert pos3[202] == 3.0  # 0.6 (поддерживающая) * 5.0
+
+
+def test_recommendations_use_settings_service_priorities(db) -> None:
+    """DraftService берёт приоритеты из SettingsService, если привязан."""
+    from vetmo.services.settings_service import SettingsService
+    _, sessionmaker = db
+    _add_heroes(sessionmaker)
+    settings_service = SettingsService(sessionmaker)
+    settings_service.set_position_priorities({1: [104]})
+    service = DraftService(sessionmaker, settings_service=settings_service)
+    recs = service.get_recommendations(1, limit=3)
+    assert recs[0][0].id == 104
+    assert recs[0][1] == 10.0

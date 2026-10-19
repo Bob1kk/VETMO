@@ -11,10 +11,17 @@ from vetmo.data.repositories.hero_repo import HeroRepository
 from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import DraftSession, Hero, Pick, Team
-from vetmo.domain.rules import is_valid_step, suggest_position, team_for_step
+from vetmo.domain.rules import (
+    is_valid_step,
+    position_fit,
+    suggest_position,
+    team_for_step,
+)
+from vetmo.services.settings_service import SettingsService
 
 _KEY_PRIORITIES = "position_priorities"
 _PRIORITY_BONUS = 10.0
+_POSITION_FIT_WEIGHT = 5.0
 
 
 class DraftService:
@@ -23,9 +30,11 @@ class DraftService:
     def __init__(
         self, sessionmaker: sessionmaker[Session],
         hero_repo_cls: type = HeroRepository,
+        settings_service: SettingsService | None = None,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._hero_repo_cls = hero_repo_cls
+        self._settings_service = settings_service
 
     # --- сессии ---
     def start_session(self) -> DraftSession:
@@ -112,6 +121,12 @@ class DraftService:
         return self.add_pick(team, position, hero_id, session_id=state.id)
 
     # --- рекомендации ---
+    def _get_priorities(self) -> dict[int, list[int]]:
+        """Приоритеты: от SettingsService, если привязан, иначе из БД."""
+        if self._settings_service is not None:
+            return self._settings_service.get_position_priorities()
+        return self._read_priorities()
+
     def _read_priorities(self) -> dict[int, list[int]]:
         """Приоритеты позиций из user_settings."""
         with self._sessionmaker() as session:
@@ -160,6 +175,7 @@ class DraftService:
                         }
             meta_repo = MetaRepository(session)
             counter_repo = CounterRepository(session)
+            priorities = self._get_priorities()
             candidates: list[tuple[Hero, float]] = []
             for hero in heroes:
                 if hero.id in picked:
@@ -178,7 +194,7 @@ class DraftService:
         meta_repo: MetaRepository, counter_repo: CounterRepository,
         priorities: dict[int, list[int]],
     ) -> float:
-        """Скоринг героя: мета + контрпики против enemy − enemy контрит + приоритет."""
+        """Скоринг: мета + контрпики − enemy контрит + приоритет + position_fit."""
         score = 0.0
         has_meta = has_counters = False
         meta = meta_repo.get_meta(hero.id)
@@ -195,8 +211,14 @@ class DraftService:
                     score -= wr_against
                     has_counters = True
         # Пустая таблица синергий: win_rate_with=0 (данных от API нет).
-        if hero.id in priorities.get(position, []):
+        is_priority = hero.id in priorities.get(position, [])
+        if is_priority:
             score += _PRIORITY_BONUS
-        if not (has_meta or has_counters) and not priorities.get(position):
+        # Ролевой фит: 1.0 первичная роль, 0.6 поддерживающая (см. rules.POSITION_ROLES).
+        # Вес до +5.0: мета/контрпики доминируют, carry не вылезает на pos 5.
+        fit = position_fit(tuple(hero.roles), position)
+        score += fit * _POSITION_FIT_WEIGHT
+        # Фолбэк: данных (мета/контрпики/приоритет) нет и фит нулевой — мусор не выдаём.
+        if not (has_meta or has_counters or is_priority) and fit == 0.0:
             return 0.0
         return score
