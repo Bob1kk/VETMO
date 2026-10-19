@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+*.spec.bak
+
+# Секреты
+.env
+
+# Логи и БД
+logs/
+*.log
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# PySide/CV артефакты
+assets/cache/
