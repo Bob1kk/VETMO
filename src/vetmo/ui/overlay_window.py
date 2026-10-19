@@ -80,6 +80,12 @@ class OverlayColumn(QFrame):
         """Прячет/показывает колонку (Dire настраивается в лаунчере)."""
         self.setVisible(visible)
 
+    def set_matchup_loader(self, loader) -> None:
+        """Раздаёт loader(hero_id) всем карточкам колонки (тултипы R2)."""
+        for cards in self._cards.values():
+            for card in cards:
+                card.set_matchup_loader(loader)
+
 
 class OverlayWindow(QWidget):
     """Окно оверлея, привязываемое в OverlayService через getattr-API."""
@@ -132,6 +138,11 @@ class OverlayWindow(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(panel)
+
+    def set_matchup_loader(self, loader) -> None:
+        """loader(hero_id) -> (strong, weak) | None — ленивые тултипы (B)."""
+        for column in (self._radiant, self._dire):
+            column.set_matchup_loader(loader)
 
     # --- контракт OverlayService (вызывается через getattr) ---
     def show_overlay(self) -> None:

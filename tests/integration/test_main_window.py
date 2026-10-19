@@ -22,7 +22,7 @@ def test_main_window_created_and_shown_under_3s(make_window) -> None:
 
 
 def test_main_window_shows_news_panel(make_window, qtbot) -> None:
-    """FR-001 (матрица трассировки): панель новостей присутствует в окне."""
+    """FR-001 (матрица трассировки): панели новостей и меты присутствуют."""
     window = make_window()
     news = window._news_widget
     meta = window._meta_widget
@@ -30,17 +30,10 @@ def test_main_window_shows_news_panel(make_window, qtbot) -> None:
     assert meta is not None and meta.parent() is not None
     assert news.isVisibleTo(window)
     assert meta.isVisibleTo(window)
-    # воркер новостей отработал, список заполнен (заглушка вернула []).
-    qtbot.waitUntil(
-        lambda: (
-            news._list.count() > 0
-            and "Ошибка" not in news._list.item(0).text()
-            and "Загрузка" not in news._list.item(0).text()
-        ),
-        timeout=10000,
-    )
-    assert "Новостей пока нет" in news._list.item(0).text()
-    assert "Онлайн" == news._badge.text()  # заглушка возвращает is_online=True
+    # воркер новостей отработал (заглушка вернула ([], is_online=True)).
+    qtbot.waitUntil(lambda: news._badge.text() == "Онлайн", timeout=10000)
+    assert news.row_count() == 0
+    assert "Новостей пока нет" in news._placeholder.text()
 
 
 def test_overlay_button_found_by_text(make_window) -> None:

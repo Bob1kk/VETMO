@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from vetmo.data.models_orm import HeroCounterORM, HeroORM
 from vetmo.domain.models import Hero
 
+_MIN_SAMPLE = 100  # порог достоверной выборки (R2: все пары, games >= 100)
+
 
 def _to_hero(row: HeroORM) -> Hero:
     """ORM Hero -> доменная модель."""
@@ -70,3 +72,38 @@ class CounterRepository:
         )
         rows = self._session.execute(stmt).all()
         return [(_to_hero(r[0]), float(r[1]), int(r[2])) for r in rows]
+
+    def _top_pairs(
+        self, hero_id: int, by_hero: bool, limit: int,
+    ) -> list[tuple[Hero, float, int]]:
+        """Топ пар по win_rate (выборка >= _MIN_SAMPLE).
+
+        by_hero=True  — кого контрит hero_id (join по counter_hero_id);
+        by_hero=False — кто контрит hero_id (join по hero_id строки).
+        """
+        stmt = select(HeroORM, HeroCounterORM.win_rate_against,
+                      HeroCounterORM.sample_size)
+        join_col = (
+            HeroCounterORM.counter_hero_id if by_hero else HeroCounterORM.hero_id)
+        stmt = stmt.join(
+            HeroCounterORM, join_col == HeroORM.id)
+        where_col = (
+            HeroCounterORM.hero_id if by_hero else HeroCounterORM.counter_hero_id)
+        stmt = (
+            stmt.where(where_col == hero_id)
+            .where(HeroCounterORM.sample_size >= _MIN_SAMPLE)
+            .order_by(HeroCounterORM.win_rate_against.desc())
+            .limit(max(0, limit))
+        )
+        rows = self._session.execute(stmt).all()
+        return [(_to_hero(r[0]), float(r[1]), int(r[2])) for r in rows]
+
+    def top_advantages(self, hero_id: int, limit: int = 5) -> list[tuple[Hero, float]]:
+        """Герои, которых hero_id контрит: [(Hero, win против них), ...] top-N."""
+        return [(hero, win) for hero, win, _sample in (
+            self._top_pairs(hero_id, True, limit))]
+
+    def top_disadvantages(self, hero_id: int, limit: int = 5) -> list[tuple[Hero, float]]:
+        """Герои, которые контрят hero_id: [(Hero, win против hero), ...] top-N."""
+        return [(hero, win) for hero, win, _sample in (
+            self._top_pairs(hero_id, False, limit))]

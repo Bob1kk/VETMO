@@ -41,6 +41,18 @@ a = Analysis(
             os.path.join(ROOT, "src", "vetmo", "data", "migrations"),
             os.path.join("vetmo", "data", "migrations"),
         ),
+        # Кэш иконок всех героев (_literals 127 png) — офлайн-иконки в exe.
+        *(
+            (src_path, os.path.join("assets", "cache", "icons"))
+            for src_path in [
+                os.path.join(ROOT, "assets", "cache", "icons", f)
+                for f in sorted(
+                    n for n in os.listdir(
+                        os.path.join(ROOT, "assets", "cache", "icons"))
+                    if n.endswith(".png")
+                )
+            ]
+        ),
     ],
     hiddenimports=["logging.config", "logging.handlers"],
     hookspath=[],

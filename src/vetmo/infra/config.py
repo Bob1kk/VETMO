@@ -23,3 +23,4 @@ class Settings(BaseSettings):
     opendota_base_url: str = "https://api.opendota.com/api/"
     rate_limit_per_min: int = 60
     cache_ttl_hours: float = 24.0
+    news_ttl_hours: float = 6.0

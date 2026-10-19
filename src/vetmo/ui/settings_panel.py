@@ -49,8 +49,8 @@ class SettingsPanel(QFrame):
 
     # --- построение ---
     def _build_ui(self, app_version: str) -> None:
-        title = QLabel("Настройки оверлея", self)
-        title.setObjectName("h2")
+        title = QLabel("⚙ НАСТРОЙКИ ОВЕРЛЕЯ", self)
+        title.setObjectName("sectionTitle")
 
         # Позиция оверлея
         form = QFormLayout()

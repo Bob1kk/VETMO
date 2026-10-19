@@ -1,7 +1,10 @@
-"""QSS-темы VETMO: THEME_DARK / THEME_LIGHT — строки стилей, без внешних файлов.
+"""QSS-темы VETMO: THEME_DARK / THEME_LIGHT (R2, задача D — свежий рестайл).
 
-Требование T-020/NFR-007: всё стилевое оформление в коде Python,
-чтобы PyInstaller собирал один .exe без внешних ресурсов.
+R2-штрихи: градиентные главные кнопки, чипсы-фильтры с активной заливкой
+акцентом, мягкие тени карточек (эффекты в widgets-коде), hover-состояния
+всем интерактивным, секционные заголовки («📰 НОВОСТИ ПАТЧЕЙ», «⚙ …»),
+компактная мета-таблица без сетки. Всё QSS — темы в Python-коде (T-020:
+PyInstaller .exe не теряет стили).
 """
 
 from string import Template
@@ -10,36 +13,36 @@ __all__ = ["THEME_DARK", "THEME_LIGHT", "theme_for"]
 
 
 _DARK: dict[str, str] = {
-    "bg": "#1E1F26",
-    "bg_alt": "#232429",
-    "panel": "#26282f",
-    "panel_2": "#2C2F39",
-    "text": "#E6E8EE",
+    "bg": "#181A20",
+    "bg_alt": "#1E2027",
+    "panel": "#22242C",
+    "panel_2": "#282B34",
+    "text": "#E8EAF0",
     "muted": "#9AA0AC",
-    "border": "#343846",
+    "border": "#32364A",
     "accent": "#5B8DEF",
     "accent_hover": "#6E9CF2",
     "accent_pressed": "#4A78D8",
     "on_accent": "#FFFFFF",
     "danger": "#E05661",
     "ok": "#3FB68B",
-    "input": "#1E2028",
+    "input": "#1B1D24",
     "scroll": "#3A3E4B",
-    "overlay_panel": "rgba(30, 31, 38, 228)",
+    "overlay_panel": "rgba(24, 26, 32, 228)",
     "overlay_title": "#C9CFDC",
     "shadow": "rgba(0, 0, 0, 120)",
 }
 
 _LIGHT: dict[str, str] = {
-    "bg": "#F2F4F8",
-    "bg_alt": "#EAEDF2",
+    "bg": "#F3F5F9",
+    "bg_alt": "#EAEDF3",
     "panel": "#FFFFFF",
-    "panel_2": "#EEF1F5",
+    "panel_2": "#EEF1F6",
     "text": "#1F2430",
-    "muted": "#6B7280",
+    "muted": "#657086",
     "border": "#D5D9E2",
-    "accent": "#5B8DEF",
-    "accent_hover": "#4A78D8",
+    "accent": "#4A78D8",
+    "accent_hover": "#5B8DEF",
     "accent_pressed": "#3E68C4",
     "on_accent": "#FFFFFF",
     "danger": "#D64550",
@@ -53,7 +56,7 @@ _LIGHT: dict[str, str] = {
 
 _TEMPLATE = Template(
     """
-/* ---------- База ---------- */
+/* ---------- база ---------- */
 QWidget {
     background: $bg;
     color: $text;
@@ -67,11 +70,67 @@ QWidget:disabled {
     color: $muted;
 }
 
-/* ---------- Заголовки и бейджи ---------- */
-QLabel#h1 { font-size: 20px; font-weight: 700; }
-QLabel#h2 { font-size: 15px; font-weight: 600; }
-QLabel#muted { color: $muted; font-size: 12px; }
-QLabel#mutedSmall { color: $muted; font-size: 11px; }
+/* ---------- слои заголовков/бейджи ---------- */
+QLabel#h1 { font-size: 19px; font-weight: 700; }
+QLabel#h2 { font-size: 14px; font-weight: 600; }
+QLabel#sectionTitle {
+    font-size: 11px;
+    font-weight: 700;
+    color: $muted;
+    letter-spacing: 1px;
+    background: transparent;
+    padding: 2px 2px;
+}
+QLabel#sectionLabel {
+    font-size: 11px;
+    font-weight: 700;
+    color: $muted;
+    letter-spacing: 0.6px;
+    background: transparent;
+}
+QLabel#chipLabel {
+    font-size: 11px;
+    font-weight: 600;
+    color: $muted;
+    background: transparent;
+    padding-right: 4px;
+}
+QLabel#muted { color: $muted; font-size: 12px; background: transparent; }
+QLabel#mutedSmall { color: $muted; font-size: 11px; background: transparent; }
+QLabel#delta {
+    font-size: 12px;
+    font-weight: 700;
+    background: transparent;
+}
+QLabel#nodata { color: $muted; font-size: 12px; background: transparent; }
+QLabel#metaHeroName {
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+}
+QLabel#metaRate {
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
+}
+QLabel#newsTitle {
+    color: $accent;
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+}
+QLabel#newsTitle:hover { text-decoration: underline; }
+QLabel#newsSnippet {
+    color: $muted;
+    font-size: 12px;
+    background: transparent;
+}
+QLabel#newsPlaceholder {
+    color: $muted;
+    font-size: 12px;
+    padding: 8px 6px;
+    background: transparent;
+}
 QLabel#badgeOnline {
     background: $ok; color: #FFFFFF; border-radius: 8px;
     padding: 2px 10px; font-size: 11px; font-weight: 600;
@@ -81,22 +140,37 @@ QLabel#badgeOffline {
     padding: 2px 10px; font-size: 11px; font-weight: 600;
 }
 
-/* ---------- Панели и карточки ---------- */
+/* ---------- панели и карточки ---------- */
 QFrame#panel {
     background: $panel;
     border: 1px solid $border;
+    border-radius: 12px;
+}
+QFrame#metaToolbar {
+    background: $panel_2;
+    border: 1px solid $border;
     border-radius: 10px;
+}
+QFrame#newsList, QFrame#newsScroll { background: transparent; border: none; }
+QFrame#newsRow {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+}
+QFrame#newsRow:hover {
+    background: $panel_2;
+    border: 1px solid $border;
 }
 QFrame#heroCard {
     background: $panel;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 12px;
 }
 QFrame#heroCard:hover {
     border: 1px solid $accent;
 }
 QLabel#cardName { font-size: 12px; font-weight: 600; }
-QLabel#cardReason { color: $accent; font-size: 11px; }
+QLabel#cardReason { color: $accent; font-size: 11px; background: transparent; }
 QLabel#cardWr { color: $ok; font-size: 11px; font-weight: 600; }
 QLabel#cardEmpty { color: $muted; font-size: 11px; font-style: italic; }
 QLabel#iconPlaceholder {
@@ -107,7 +181,7 @@ QLabel#iconPlaceholder {
     font-weight: 700;
 }
 
-/* ---------- Кнопки ---------- */
+/* ---------- кнопки ---------- */
 QPushButton {
     background: $panel_2;
     border: 1px solid $border;
@@ -118,6 +192,7 @@ QPushButton {
 QPushButton:hover {
     background: $bg_alt;
     border: 1px solid $accent;
+    color: $text;
 }
 QPushButton:pressed {
     background: $accent_pressed;
@@ -130,13 +205,15 @@ QPushButton:disabled {
     color: $muted;
 }
 QPushButton#primary {
-    background: $accent;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $accent_hover, stop:1 $accent);
     border: 1px solid $accent;
     color: $on_accent;
     font-weight: 700;
 }
 QPushButton#primary:hover {
-    background: $accent_hover;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $accent, stop:1 $accent_hover);
     border: 1px solid $accent_hover;
 }
 QPushButton#primary:pressed {
@@ -147,15 +224,20 @@ QPushButton#primary:disabled {
     color: rgba(255, 255, 255, 140);
 }
 QPushButton#bigOverlay {
-    background: $accent;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $accent_hover, stop:1 $accent);
     border: 1px solid $accent;
     color: $on_accent;
-    border-radius: 10px;
+    border-radius: 12px;
     font-size: 15px;
     font-weight: 700;
-    padding: 12px 22px;
+    padding: 12px 24px;
 }
-QPushButton#bigOverlay:hover { background: $accent_hover; }
+QPushButton#bigOverlay:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $accent, stop:1 $accent_hover);
+    border: 1px solid $accent_hover;
+}
 QPushButton#bigOverlay:pressed { background: $accent_pressed; }
 QPushButton#bigOverlay:disabled {
     background: $accent_pressed;
@@ -169,9 +251,30 @@ QPushButton#secondary {
 QPushButton#secondary:hover {
     border: 1px solid $accent;
     color: $text;
+    background: $panel_2;
 }
 
-/* ---------- Поля ввода ---------- */
+/* ---------- чипсы-фильтры (мета-тулбар) ---------- */
+QPushButton#chip {
+    background: $bg_alt;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 2px 12px;
+    font-size: 12px;
+    color: $muted;
+}
+QPushButton#chip:hover {
+    border: 1px solid $accent;
+    color: $text;
+}
+QPushButton#chip:checked {
+    background: $accent;
+    border: 1px solid $accent;
+    color: $on_accent;
+    font-weight: 600;
+}
+
+/* ---------- формы и ввод ---------- */
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     background: $input;
     border: 1px solid $border;
@@ -220,7 +323,7 @@ QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
     border-top: 5px solid $muted;
 }
 
-/* ---------- Чекбоксы ---------- */
+/* ---------- чекбоксы ---------- */
 QCheckBox { spacing: 8px; background: transparent; }
 QCheckBox::indicator {
     width: 16px;
@@ -236,7 +339,7 @@ QCheckBox::indicator:checked {
     image: none;
 }
 
-/* ---------- Слайдер ---------- */
+/* ---------- слайдеры ---------- */
 QSlider::groove:horizontal {
     height: 6px;
     background: $input;
@@ -244,23 +347,24 @@ QSlider::groove:horizontal {
     border-radius: 3px;
 }
 QSlider::sub-page:horizontal {
-    background: $accent;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 $accent_pressed, stop:1 $accent);
     border-radius: 3px;
 }
 QSlider::handle:horizontal {
-    background: $accent;
+    background: $accent_hover;
     width: 16px;
     height: 16px;
     margin: -6px 0;
     border-radius: 8px;
     border: 2px solid $bg;
 }
-QSlider::handle:horizontal:hover { background: $accent_hover; }
+QSlider::handle:horizontal:hover { background: $accent; }
 
-/* ---------- Таблицы и списки ---------- */
+/* ---------- таблица меты ---------- */
 QTableWidget {
-    background: $panel;
-    alternate-background-color: $panel_2;
+    background: transparent;
+    alternate-background-color: $bg_alt;
     border: none;
     gridline-color: transparent;
     selection-background-color: $accent;
@@ -268,13 +372,13 @@ QTableWidget {
 }
 QTableCornerButton::section { background: $panel; border: none; }
 QHeaderView::section {
-    background: $panel_2;
+    background: $panel;
     color: $muted;
     border: none;
     border-bottom: 1px solid $border;
-    padding: 6px 8px;
-    font-size: 12px;
-    font-weight: 600;
+    padding: 5px 8px;
+    font-size: 11px;
+    font-weight: 700;
 }
 QListWidget {
     background: $panel;
@@ -293,7 +397,7 @@ QListWidget::item:selected {
     color: $on_accent;
 }
 
-/* ---------- Скроллбары ---------- */
+/* ---------- скроллбары ---------- */
 QScrollBar:vertical {
     background: transparent;
     width: 10px;
@@ -323,7 +427,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 }
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
 
-/* ---------- Статусбар, тултипы, меню ---------- */
+/* ---------- статус, тултипы, меню ---------- */
 QStatusBar {
     background: $panel;
     color: $muted;
@@ -334,8 +438,9 @@ QToolTip {
     background: $panel_2;
     color: $text;
     border: 1px solid $border;
-    border-radius: 6px;
-    padding: 4px 8px;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
 }
 QMenu {
     background: $panel_2;
@@ -359,11 +464,12 @@ QProgressBar {
     color: $muted;
 }
 QProgressBar::chunk {
-    background: $accent;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 $accent_pressed, stop:1 $accent);
     border-radius: 6px;
 }
 
-/* ---------- Оверлей (полупрозрачные панели поверх игры) ---------- */
+/* ---------- оверлей (borderless, прозрачный, click-through) ---------- */
 QWidget#overlayRoot { background: transparent; }
 QFrame#overlayPanel {
     background: $overlay_panel;
@@ -396,7 +502,7 @@ QLabel#overlayPosLabel { color: $muted; font-size: 10px; font-weight: 600; }
 
 
 def _render(palette: dict[str, str]) -> str:
-    """Собирает QSS из палитры (без единого пустого блока {})."""
+    """Собирает QSS из палитры (перевод строки замены не ломает)."""
     return _TEMPLATE.substitute(palette)
 
 
@@ -405,5 +511,5 @@ THEME_LIGHT: str = _render(_LIGHT)
 
 
 def theme_for(name: str) -> str:
-    """'light' -> светлая тема, иначе тёмная (значение по умолчанию)."""
+    """'light' -> светлая тема, иначе тёмная (безопасный дефолт)."""
     return THEME_LIGHT if name == "light" else THEME_DARK

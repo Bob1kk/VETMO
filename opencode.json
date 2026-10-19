@@ -546,6 +546,92 @@
           "effect": "allow"
         }
       ]
+    },
+    "api-agent": {
+      "description": "API-агент VETMO. Исследование и реализация работы с внешними API: OpenDota (heroStats/matchups/RSS), Stratz GraphQL (оценка), Steam-новости Dota 2, скачивание иконок CDN.",
+      "mode": "subagent",
+      "permissions": [
+        {
+          "action": "skill",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "src/vetmo/**",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "tests/**",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "pyproject.toml",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "docs/**",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": ".\\.venv\\Scripts\\python.exe *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "py -m pytest *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "py -m ruff *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "py -c *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git status*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git log*",
+          "effect": "allow"
+        },
+        {
+          "action": "webfetch",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "websearch",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git commit*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git add*",
+          "effect": "deny"
+        }
+      ]
     }
   }
 }

@@ -50,12 +50,17 @@ class SupabaseClient:
             return []
         return [
             {
-                "hero_id": hero.id,
-                "hero_name": hero.name,
-                "win_rate": win_rate,
-                "pick_rate": pick_rate,
+                "hero_id": row.hero_id,
+                "hero_name": row.name,
+                "win_rate": row.win_rate,
+                "pick_rate": row.pick_rate,
+                "ban_rate": row.ban_rate,
+                "delta_win": row.delta_win,
+                "delta_pick": row.delta_pick,
+                "delta_ban": row.delta_ban,
+                "positions": row.positions,
             }
-            for hero, win_rate, pick_rate in top
+            for row in top
         ]
 
     def _post(self, payload: list[dict[str, Any]]) -> int:

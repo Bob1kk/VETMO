@@ -80,16 +80,18 @@ def test_synergy_repo_upsert_and_list(session: Session, heroes: list[Hero]) -> N
 
 
 def test_meta_repo_requires_patch_and_dedup(session: Session, heroes: list[Hero]) -> None:
-    """MetaRepository: дедуп по patch+hero, get_meta, get_top_meta."""
+    """MetaRepository: дедуп по patch+hero+tier, дельты, get_top_meta (MetaRow)."""
     patch_id = MetaRepository.ensure_patch(session, "7.54", None, "тест")
     repo = MetaRepository(session)
     repo.upsert(patch_id, 1, 52.3, 8.1)
-    repo.upsert(patch_id, 1, 53.0, 8.5)  # дедуп по patch+hero
-    assert repo.get_meta(1) is not None
+    assert repo.get_meta(1) == (52.3, 8.1)
+    repo.upsert(patch_id, 1, 53.0, 8.5)  # дедуп по patch+hero(tier=None)
     top = repo.get_top_meta(limit=10)
     assert len(top) == 1
-    h, win, pick = top[0]
-    assert h.id == 1 and win == 53.0 and pick == 8.5
+    row = top[0]
+    assert row.hero_id == 1 and row.win_rate == 53.0 and row.pick_rate == 8.5
+    assert row.delta_win == 0.7 and row.delta_pick == 0.4  # дельты vs прежней строки
+    assert repo.get_meta(1) == (53.0, 8.5)
 
 
 def test_draft_repo_full_cycle(session: Session, heroes: list[Hero]) -> None:

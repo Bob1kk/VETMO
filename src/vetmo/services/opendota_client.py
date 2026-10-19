@@ -1,9 +1,11 @@
-"""OpenDota API клиент: кэш >= 24ч, ретраи, rate limit. Контракт T-008."""
+"""OpenDota API клиент: кэш >= 24ч, ретраи, rate limit. Контракт T-008 + R2."""
 
+import json
 import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, ClassVar
 
 import httpx
@@ -15,13 +17,17 @@ from vetmo.data.repositories.hero_repo import HeroRepository
 from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import Hero
+from vetmo.infra.http_client import build_http_client
 from vetmo.infra.proxy import system_proxy_url
 from vetmo.services.validator_service import ValidatorService
 
 logger = logging.getLogger("vetmo.opendota")
 
 _KEY_LAST_SYNC_HEROES = "last_sync_heroes"
+_KEY_MATCHUPS_SYNCED = "matchups_synced_hero_ids"
 PATCH_PUBLIC_LADDER = "public-ladder"
+RANK_TIERS: tuple[int, ...] = tuple(range(1, 9))  # 1=Herald..8=Immortal
+ICON_TIMEOUT = 10.0
 
 
 @dataclass
@@ -116,7 +122,14 @@ class OpenDotaClient:
 
     # --- синхронизация героев ---
     def sync_heroes(self, limit: int = 120) -> SyncResult:
-        """GET heroStats -> upsert героев; кэш TTL -> сеть не трогается."""
+        """GET heroStats -> upsert героев + мета v2; кэш TTL -> сеть не трогается.
+
+        Мета: (1) rank_tier=None — общий pub: win=pub_win/pub_pick*100,
+        pick — относительная доля pub_pick *1000 (кап 100); (2) для каждого
+        тира t=1..8 с {t}_pick>0 — row rank_tier=t, win={t}_win/{t}_pick*100,
+        pick — доля в тире (1000*{t}_pick/Σ{t}_pick, кап 100). ban_rate —
+        доля про-банов pro_ban/(pro_pick+pro_ban)*100 (кап 100), одна на героя.
+        """
         with self._sessionmaker() as session:
             settings_repo = SettingsRepository(session)
             if self._cache_is_fresh(settings_repo):
@@ -127,12 +140,16 @@ class OpenDotaClient:
             logger.warning("heroStats недоступен — offline, БД не тронута")
             return SyncResult(skipped=limit)
         data = data[:limit] if limit and limit > 0 else data
+        records = [r for r in data if isinstance(r, dict)]
 
-        # Мета: heroStats несёт pub_pick/pub_win (публичный ранк_tracke~). Считаем
-        # win_rate = pub_win/pub_pick*100; pick_rate — относительная доля пиков ×10
-        # (сумма по всем героям ≈ 1000 ÷ 10 слотов матча), кап 100.
-        total_pub_pick = sum(
-            float(r.get("pub_pick") or 0) for r in data if isinstance(r, dict))
+        # Winrate = win/pick*100; pick_rate — относительная доля пиков ×1000
+        # (сумма по героям ≈ 1000 ÷ 10 слотов матча), кап 100.
+        total_pub_pick = sum(float(r.get("pub_pick") or 0) for r in records)
+        tier_totals = {
+            tier: sum(float(r.get(f"{tier}_pick") or 0) for r in records)
+            for tier in RANK_TIERS
+        }
+        totals: dict[int, float] = {0: total_pub_pick, **tier_totals}
         patch: int | None = None
         if total_pub_pick > 0:
             patch = MetaRepository.ensure_patch(
@@ -145,9 +162,7 @@ class OpenDotaClient:
         ok = quarantined = 0
         try:
             settings_repo = SettingsRepository(session)
-            for record in data:
-                if not isinstance(record, dict):
-                    continue
+            for record in records:
                 hero = self._map_hero(record)
                 if hero is None:
                     quarantined += 1
@@ -164,21 +179,9 @@ class OpenDotaClient:
                     continue
                 hero_repo.upsert(hero)
                 if patch is not None:
-                    pub_pick = float(record.get("pub_pick") or 0)
-                    pub_win = float(record.get("pub_win") or 0)
-                    if pub_pick > 0:
-                        win_rate = round(100.0 * pub_win / pub_pick, 2)
-                        pick_rate = min(
-                            100.0, round(1000.0 * pub_pick / total_pub_pick, 2))
-                        meta_check = self._validator.validate_meta(
-                            {"win_rate": win_rate, "pick_rate": pick_rate})
-                        if meta_check.quarantined:
-                            logger.warning(
-                                "Мета героя %s в карантине: %s",
-                                hero.id, meta_check.reason,
-                            )
-                        else:
-                            meta_repo.upsert(patch, hero.id, win_rate, pick_rate)
+                    bad = self._write_meta_rows(
+                        record, hero.id, patch, meta_repo, totals)
+                    quarantined += bad
                 ok += 1
             settings_repo.set(
                 _KEY_LAST_SYNC_HEROES, datetime.now(UTC).isoformat())
@@ -186,6 +189,53 @@ class OpenDotaClient:
         finally:
             session.close()
         return SyncResult(total=len(data), ok=ok, quarantined=quarantined)
+
+    def _write_meta_rows(
+        self, record: dict, hero_id: int, patch_id: int,
+        meta_repo: MetaRepository, totals: dict[int, float],
+    ) -> int:
+        """Пишет мета-строки героя (pub + тиры); возвращает число карантинов."""
+        pro_pick = float(record.get("pro_pick") or 0)
+        pro_ban = float(record.get("pro_ban") or 0)
+        pro_denom = pro_pick + pro_ban
+        ban_rate = min(100.0, 100.0 * pro_ban / pro_denom) if pro_denom > 0 else 0.0
+
+        pub_pick = float(record.get("pub_pick") or 0)
+        pub_win = float(record.get("pub_win") or 0)
+        rows: list[tuple[int | None, float, float]] = []
+        if pub_pick > 0 and totals.get(0):
+            rows.append((
+                None, 100.0 * pub_win / pub_pick,
+                1000.0 * pub_pick / totals[0],
+            ))
+        for tier in RANK_TIERS:
+            tier_pick = float(record.get(f"{tier}_pick") or 0)
+            tier_total = totals.get(tier) or 0.0
+            if tier_pick <= 0 or tier_total <= 0:
+                continue
+            rows.append((
+                tier,
+                100.0 * float(record.get(f"{tier}_win") or 0) / tier_pick,
+                1000.0 * tier_pick / tier_total,
+            ))
+
+        quarantined = 0
+        for rank_tier, wr, pick in rows:
+            win_rate = round(max(0.0, min(100.0, wr)), 2)
+            pick_rate = round(max(0.0, min(100.0, pick)), 2)
+            meta_check = self._validator.validate_meta(
+                {"win_rate": win_rate, "pick_rate": pick_rate})
+            if meta_check.quarantined:
+                logger.warning(
+                    "Мета %s (герой %s, тир %s) в карантине: %s",
+                    win_rate, hero_id, rank_tier, meta_check.reason,
+                )
+                quarantined += 1
+                continue
+            meta_repo.upsert(
+                patch_id, hero_id, win_rate, pick_rate,
+                rank_tier=rank_tier, ban_rate=ban_rate)
+        return quarantined
 
     def _map_hero(self, record: dict) -> Hero | None:
         """Сырая запись heroStats -> доменная Hero (или None при плохом id)."""
@@ -219,8 +269,9 @@ class OpenDotaClient:
         if icon.startswith("//"):
             return f"https:{icon}"
         if icon.startswith("/"):
-            # Относительный путь OpenDota (icon/img в heroStats): '/apps/dota2/...'
-            return f"https://cdn.dota2.com{icon}"
+            # Относительный путь OpenDota: '/apps/dota2/...' -> steamstatic
+            # CDN (cdn.dota2.com сейчас отдаёт невалидный сертификат).
+            return f"https://cdn.cloudflare.steamstatic.com{icon.split('?')[0]}"
         return icon
 
     # --- матчапы (контрпики) ---
@@ -237,31 +288,95 @@ class OpenDotaClient:
                 hero_ids if hero_ids is not None
                 else [h.id for h in HeroRepository(session).get_all()]
             )
-            if not ids:
-                return SyncResult()
-            counter_repo = CounterRepository(session)
-            for hero_id in ids:
-                data = self._request(f"heroes/{int(hero_id)}/matchups")
-                if not isinstance(data, list):
-                    logger.warning("matchups %s недоступны", hero_id)
-                    skipped += 1
-                    continue
-                rows = [r for r in data if isinstance(r, dict)]
-                rows.sort(key=lambda r: -int(r.get("games_played") or 0))
-                for row in rows[:max(1, rivals_per_hero)]:
-                    against = self._opponent_id(row)
-                    if against is None or against == hero_id:
-                        continue
-                    games = int(row.get("games_played") or 0)
-                    if games <= 0:
-                        continue
-                    wins = int(row.get("wins") or 0)
-                    wr_against = round(
-                        max(0.0, min(100.0, wins / games * 100.0)), 2)
-                    counter_repo.upsert(int(hero_id), against, wr_against, games)
-                    ok += 1
-                    total += 1
+        for hero_id in ids:
+            count = self._sync_matchups_for_hero(
+                hero_id, rivals_per_hero=rivals_per_hero, min_games=0)
+            if count is None:
+                skipped += 1
+                continue
+            ok += count
+            total += count
         return SyncResult(total=total, ok=ok, skipped=skipped)
+
+    def sync_matchups_all(
+        self, resume: bool = True, min_games: int = 100,
+    ) -> dict[str, Any]:
+        """Контрпики ВСЕХ героев БД (все пары с games >= min_games).
+
+        Resume: ключ settings `matchups_synced_hero_ids` (JSON-список) —
+        прогресс обновляется ПОСЛЕ каждого успешного героя, обрыв сети
+        продолжается с того места. Возвращает dict:
+        {"total": строк, "synced": героев ок, "skipped": героев пропущено,
+        "last_hero_id": id последнего успешного или None}.
+        """
+        with self._sessionmaker() as session:
+            hero_ids = [h.id for h in HeroRepository(session).get_all()]
+            settings_repo = SettingsRepository(session)
+            raw = settings_repo.get(_KEY_MATCHUPS_SYNCED)
+        if not hero_ids:
+            return {"total": 0, "synced": 0, "skipped": 0, "last_hero_id": None}
+        done: set[int] = set()
+        if resume and raw:
+            try:
+                done = {int(x) for x in json.loads(raw)}
+            except (TypeError, ValueError):
+                logger.warning("Плохой ключ %s — начинаем заново",
+                               _KEY_MATCHUPS_SYNCED)
+                done = set()
+        todo = [i for i in hero_ids if i not in done]
+        rows = synced = skipped = 0
+        last: int | None = None
+        for hero_id in todo:
+            count = self._sync_matchups_for_hero(
+                hero_id, rivals_per_hero=0, min_games=min_games)
+            if count is None:
+                logger.warning("matchups %s пропущены (resume продолжит)",
+                               hero_id)
+                skipped += 1
+                continue
+            synced += 1
+            rows += count
+            last = hero_id
+            done.add(hero_id)
+            with self._sessionmaker() as session:
+                SettingsRepository(session).set(
+                    _KEY_MATCHUPS_SYNCED, json.dumps(sorted(done)))
+        return {"total": rows, "synced": synced, "skipped": skipped,
+                "last_hero_id": last}
+
+    def _sync_matchups_for_hero(
+        self,
+        hero_id: int, rivals_per_hero: int = 0, min_games: int = 0,
+    ) -> int | None:
+        """Матчапы одного героя; None при сетевом сбои, число записей при ок.
+
+        rivals_per_hero: 0 — без ограничения (все соперники); иначе top-N
+        по games_played. min_games — минимальная выборка пары (R2: 100).
+        """
+        data = self._request(f"heroes/{int(hero_id)}/matchups")
+        if not isinstance(data, list):
+            logger.warning("matchups %s недоступны", hero_id)
+            return None
+        rows = [r for r in data if isinstance(r, dict)]
+        rows.sort(key=lambda r: -int(r.get("games_played") or 0))
+        count = 0
+        with self._sessionmaker() as session:
+            counter_repo = CounterRepository(session)
+            for row in rows:
+                games = int(row.get("games_played") or 0)
+                if games <= 0 or games < min_games:
+                    continue
+                if rivals_per_hero > 0 and count >= rivals_per_hero:
+                    break
+                against = self._opponent_id(row)
+                if against is None or against == hero_id:
+                    continue
+                wins = int(row.get("wins") or 0)
+                wr_against = round(
+                    max(0.0, min(100.0, wins / games * 100.0)), 2)
+                counter_repo.upsert(int(hero_id), against, wr_against, games)
+                count += 1
+        return count
 
     @staticmethod
     def _opponent_id(row: dict) -> int | None:
@@ -274,3 +389,52 @@ class OpenDotaClient:
             if value > 0:
                 return value
         return None
+
+    # --- кэш иконок (R2) ---
+    def sync_icon_cache(
+        self, icons_dir: Path | str = Path("assets/cache/icons"),
+        http_client: httpx.Client | None = None,
+    ) -> dict[str, int]:
+        """Скачивает icon_url героев в {icons_dir}/{hero_id}.png (если нет файла).
+
+        path КЭШ: существующий непустой файл НЕ перекачивается. Сбои сети не
+        крашат (лог + failed). Возвращает {"downloaded": n, "cached": m,
+        "failed": k}.
+        """
+        icons = Path(icons_dir)
+        with self._sessionmaker() as session:
+            heroes = HeroRepository(session).get_all()
+        result = {"downloaded": 0, "cached": 0, "failed": 0}
+        if not heroes:
+            return result
+        icons.mkdir(parents=True, exist_ok=True)
+        http = None
+        try:
+            http = http_client
+            if http is None:
+                http = build_http_client(ICON_TIMEOUT)
+            for hero in heroes:
+                target = icons / f"{hero.id}.png"
+                if target.exists() and target.stat().st_size > 0:
+                    result["cached"] += 1
+                    continue
+                if not hero.icon_url:
+                    logger.warning("Иконка %s: url пуст", hero.id)
+                    result["failed"] += 1
+                    continue
+                try:
+                    response = http.get(hero.icon_url)
+                    if response.status_code >= 400:
+                        logger.warning(
+                            "Иконка %s: HTTP %s", hero.id, response.status_code)
+                        result["failed"] += 1
+                        continue
+                    target.write_bytes(response.content)
+                    result["downloaded"] += 1
+                except Exception as error:  # noqa: BLE001 — иконки не критичны
+                    logger.warning("Иконка %s: сеть упала: %s", hero.id, error)
+                    result["failed"] += 1
+        finally:
+            if http is not None and http_client is None:
+                http.close()
+        return result

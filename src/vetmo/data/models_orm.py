@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -56,7 +57,12 @@ class PatchORM(Base):
 
 
 class MetaSnapshotORM(Base):
-    """Мета-снэпшот по патчу и герою; дедуп прикладывается в репозитории."""
+    """Мета-снэпшот по патчу, герою и ранговому тиру (R2: meta v2).
+
+    rank_tier NULL — общий паблик-тир; 1..8 — Herald..Immortal.
+    ban_rate в долях банов (0..100); delta_* — разность с предыдущим
+    снэпшотом того же ключа (NULL — первая запись).
+    """
 
     __tablename__ = "meta_snapshots"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -66,14 +72,22 @@ class MetaSnapshotORM(Base):
         ForeignKey("heroes.id"), nullable=False)
     win_rate: Mapped[float] = mapped_column(Float, nullable=False)
     pick_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    ban_rate: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default=text("0"))
+    delta_win: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delta_pick: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delta_ban: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rank_tier: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now())
 
     __table_args__ = (
         Index("ix_meta_snapshot_patch_hero", "patch_id", "hero_id"),
-        UniqueConstraint("patch_id", "hero_id", name="uq_meta_patch_hero"),
+        Index("ix_meta_snapshot_patch_hero_tier",
+              "patch_id", "hero_id", "rank_tier", unique=True),
         CheckConstraint("win_rate BETWEEN 0 AND 100", name="ck_meta_win_rate"),
         CheckConstraint("pick_rate BETWEEN 0 AND 100", name="ck_meta_pick_rate"),
+        CheckConstraint("ban_rate BETWEEN 0 AND 100", name="ck_meta_ban_rate"),
     )
 
 
@@ -126,6 +140,23 @@ class UserSettingORM(Base):
     value: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (Index("ix_settings_key", "key"),)
+
+
+class NewsItemORM(Base):
+    """Новостная заметка Dota 2 (Steam RSS); дедуп по уникальному url."""
+
+    __tablename__ = "news_items"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    url: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    published: Mapped[str | None] = mapped_column(String, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_news_items_url", "url"),
+    )
 
 
 class DraftSessionORM(Base):

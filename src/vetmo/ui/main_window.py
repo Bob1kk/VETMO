@@ -4,7 +4,9 @@
 UI обновляется только из main thread (сигналы Worker).
 """
 
-from PySide6.QtCore import Qt
+import logging
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -25,13 +27,19 @@ from vetmo.ui.theme import theme_for
 from vetmo.ui.viewmodels.main_viewmodel import MainViewModel
 from vetmo.ui.viewmodels.overlay_vm import OverlaySnapshot, OverlayViewModel
 from vetmo.ui.widgets.manual_pick_dialog import ManualPickDialog
-from vetmo.ui.widgets.meta_widget import MetaWidget
+from vetmo.ui.widgets.meta_report import MetaReportWidget
 from vetmo.ui.widgets.news_widget import NewsWidget
 from vetmo.ui.widgets.priorities_dialog import PrioritiesDialog
 from vetmo.ui.workers import start_worker
 
+logger = logging.getLogger("vetmo.ui.main_window")
+
 _RECS_PER_POSITION = 2
 _MATCHUP_HEROES = 10
+
+
+_NEWS_REFRESH_MS = 15 * 60 * 1000  # новости по таймеру (R2, задача C)
+_META_ROWS_LIMIT = 40  # строк мета-отчёта (окно 1100x700 ≈ 15 видимых)
 
 
 def _status_label(text: str) -> QLabel:
@@ -51,6 +59,7 @@ class MainWindow(QMainWindow):
             context.news_service,
             context.settings_service,
             context.draft_service,
+            meta_report_loader=getattr(context, "meta_report", None),
         )
         self._overlay_vm = OverlayViewModel(
             context.draft_service,
@@ -59,15 +68,21 @@ class MainWindow(QMainWindow):
             hero_lookup=context.get_hero_by_id,
         )
         self._news_widget = NewsWidget()
-        self._meta_widget = MetaWidget()
+        self._meta_widget = MetaReportWidget()
         self._overlay = OverlayWindow(context.settings_service)
         self._settings_panel = SettingsPanel(
             initial=self._read_settings(), app_version=__version__,
         )
         context.overlay_service.bind_window(lambda: self._overlay)
         self._overlay.refresh_requested.connect(self._refresh_overlay)
+        self._overlay.set_matchup_loader(self._matchup_loader)
+        self._meta_widget.set_matchup_loader(self._matchup_loader)
         self._vm.news_updated.subscribe(self._news_widget.on_news_updated)
-        self._vm.meta_updated.subscribe(self._meta_widget.on_meta_updated)
+        self._vm.meta_updated.subscribe(self._meta_widget.on_meta_report)
+        self._meta_widget.filters_changed.connect(self._load_meta)
+        self._news_timer = QTimer(self)
+        self._news_timer.setInterval(_NEWS_REFRESH_MS)
+        self._news_timer.timeout.connect(self._load_news)
 
         self._status_label = _status_label("Готово")
         self._toggle_overlay = QPushButton("Запустить оверлей", self)
@@ -154,6 +169,7 @@ class MainWindow(QMainWindow):
         self.status("⏳ Загружаем данные…")
         self._load_news()
         self._load_meta()
+        self._news_timer.start()
         start_worker(
             self._ctx.hero_count,
             on_done=self._after_hero_count,
@@ -186,13 +202,22 @@ class MainWindow(QMainWindow):
         self.status(f"Новости: ошибка ({message})")
 
     def _load_meta(self) -> None:
-        """Мета: worker -> MainViewModel -> MetaWidget."""
+        """Мета-отчёт с фильтрами: worker -> MainViewModel -> MetaReportWidget."""
         self._meta_widget.set_loading()
+        position, rank_tier = self._meta_widget.filters()
         start_worker(
-            self._vm.fetch_meta,
-            on_done=self._vm.publish_meta,
+            self._vm.fetch_meta_report,
+            _META_ROWS_LIMIT, rank_tier, position,
+            on_done=self._vm.publish_meta_report,
             on_fail=self._meta_widget.set_error,
         )
+
+    def _matchup_loader(self, hero_id: int) -> tuple | None:
+        """Тултип контрпиков: контракт DraftService (api-агент), лениво."""
+        getter = getattr(self._ctx.draft_service, "get_matchup_tooltip", None)
+        if getter is None:
+            return None
+        return getter(hero_id)
 
     # ------------------------------------------------------------ статус --
     def status(self, text: str) -> None:
@@ -208,15 +233,31 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ синхрон --
     def _sync_job(self, limit: int) -> dict:
-        """Синхронизация героев + матчапов (первые 10) + Supabase."""
+        """Синхронизация: герои+мета v2, контрпики ВСЕХ героев, иконки, Supabase."""
         heroes = self._ctx.opendota.sync_heroes(limit=limit)
         matchups = None
+        icons = None
         if heroes.ok:
             ids = self._ctx.first_hero_ids(_MATCHUP_HEROES)
             matchups = self._ctx.opendota.sync_matchups(
                 hero_ids=ids, rivals_per_hero=30)
+            # Фоновое дозаполнение: контрпики всех героев (resume), иконки CDN.
+            try:
+                matchups_all = getattr(
+                    self._ctx.opendota, "sync_matchups_all", None)
+                if callable(matchups_all):
+                    matchups_all(resume=True)
+                icon_sync = getattr(
+                    self._ctx.opendota, "sync_icon_cache", None)
+                if callable(icon_sync):
+                    icons = icon_sync()
+            except Exception as exc:  # noqa: BLE001 — best-effort фон
+                logger.warning("Фоновая дозаправка не удалась: %s", exc)
         supabase = self._ctx.supabase.sync_meta_snapshot(limit=50)
-        return {"heroes": heroes, "matchups": matchups, "supabase": supabase}
+        return {
+            "heroes": heroes, "matchups": matchups,
+            "supabase": supabase, "icons": icons,
+        }
 
     def _start_sync(self, limit: int = 120, auto: bool = False) -> None:
         """Кнопка «Синхронизировать данные» (или первый запуск)."""
