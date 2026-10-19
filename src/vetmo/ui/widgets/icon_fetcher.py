@@ -42,7 +42,7 @@ class IconFetcher(QObject):
         self._in_flight.discard(url)
         pixmap = QPixmap()
         if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = bytes(reply.readAll())
+            data = bytes(reply.readAll())  # type: ignore[call-overload]
             if data:
                 pixmap.loadFromData(data)
         reply.deleteLater()

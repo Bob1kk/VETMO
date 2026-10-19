@@ -13,6 +13,23 @@ class WorkerSignals(QObject):
     failed = Signal(str)
 
 
+# PySide6 не передаёт владение QRunnable в QThreadPool: как только внешняя
+# ссылка умирает, GC может снести Worker вместе с WorkerSignals РАНЬШЕ
+# доставки queued-сигнала — коллбеки on_done/on_fail теряются
+# недетерминированно. Реестр удерживает ссылку до доставки результата
+# (cleanup-слот). Незавершённые воркеры (hang) остаются в реестре — это
+# осознанный компромисс в пользу надёжности доставки сигналов.
+_waited: list["Worker"] = []
+
+
+def _release_ref(worker: "Worker") -> None:
+    """Снимает удержание ссылки на воркер после доставки done/failed."""
+    try:
+        _waited.remove(worker)
+    except ValueError:
+        pass
+
+
 class Worker(QRunnable):
     """QRunnable-обёртка над произвольной функцией (сеть/БД/CV)."""
 
@@ -26,9 +43,15 @@ class Worker(QRunnable):
         self._fn = fn
         self._args = args
         self._kwargs = kwargs
-        self._on_done = on_done
-        self._on_fail = on_fail
         self.signals = WorkerSignals()
+        if on_done is not None:
+            self.connect_done(on_done)
+        if on_fail is not None:
+            self.connect_fail(on_fail)
+        # cleanup-слоты срабатывают на доставке результата (GUI-поток),
+        # поэтому ссылка живёт ровно до конца доставки queued-сигналов.
+        self.signals.done.connect(lambda *_: _release_ref(self))
+        self.signals.failed.connect(lambda *_: _release_ref(self))
 
     def run(self) -> None:  # pragma: no cover - выполняется в worker-потоке
         """Выполняет функцию; результат/ошибка возвращаются через сигнал."""
@@ -55,5 +78,6 @@ class Worker(QRunnable):
 def start_worker(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Worker:
     """Создаёт Worker, стартует в глобальном пуле и возвращает его."""
     worker = Worker(fn, *args, **kwargs)
+    _waited.append(worker)  # удержание до доставки done/failed
     QThreadPool.globalInstance().start(worker)
     return worker

@@ -8,7 +8,7 @@ Create Date: 2026-10-19
 from collections.abc import Sequence
 
 from alembic import op
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 from vetmo.data.models_orm import Base
 
@@ -20,13 +20,13 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Создаёт все таблицы/индексы/ограничения из ORM-метаданных."""
-    bind: Engine | None = op.get_bind()
+    bind: Engine | Connection | None = op.get_bind()
     assert bind is not None
     Base.metadata.create_all(bind)
 
 
 def downgrade() -> None:
     """Удаляет все таблицы (обратный create_all)."""
-    bind2: Engine | None = op.get_bind()
+    bind2: Engine | Connection | None = op.get_bind()
     assert bind2 is not None
     Base.metadata.drop_all(bind2)

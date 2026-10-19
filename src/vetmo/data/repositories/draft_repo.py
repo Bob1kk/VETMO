@@ -1,12 +1,13 @@
 """Репозиторий драфта: сессии и пики. Контракт T-005."""
 
 from datetime import datetime
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from vetmo.data.models_orm import DraftPickORM, DraftSessionORM
-from vetmo.domain.models import DraftPick, DraftSession, Pick
+from vetmo.domain.models import DraftPick, DraftSession, Pick, Team
 
 
 def _to_domain_session(
@@ -28,7 +29,7 @@ def _load_draft_picks(session: Session, session_id: int) -> list[DraftPick]:
         .all()
     )
     return [
-        DraftPick(team=r.team, position=r.position, hero_id=r.hero_id, step=r.step)
+        DraftPick(team=cast(Team, r.team), position=r.position, hero_id=r.hero_id, step=r.step)
         for r in rows
     ]
 

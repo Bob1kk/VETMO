@@ -54,6 +54,12 @@ permissions:
   - action: shell
     resource: "py *"
     effect: allow
+  - action: edit
+    resource: "src/vetmo/**"
+    effect: allow
+  - action: edit
+    resource: "README.md"
+    effect: allow
 ---
 
 # Packaging Agent — сборка и поставка VETMO

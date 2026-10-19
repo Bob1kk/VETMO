@@ -22,7 +22,7 @@ def build_app():
     context = create_app_context()
     theme = context.settings_service.get_theme()
     app = QApplication.instance()
-    if app is not None:
+    if isinstance(app, QApplication):
         app.setStyleSheet(theme_for(theme))
     return MainWindow(context)
 

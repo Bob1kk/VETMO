@@ -82,6 +82,7 @@ class DraftService:
                     raise ValueError(f"Сессия драфта не найдена: {session_id}")
             else:
                 state = repo.start_session()
+                assert state.id is not None, "commit не выставил id сессии"
                 session_id = state.id
             step = state.current_step
             if not is_valid_step(step):

@@ -43,7 +43,7 @@ class SettingsPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("panel")
         self.setMinimumWidth(280)
-        self._commit_callbacks = {}
+        self._commit_callbacks: dict[str, object] = {}
         self._build_ui(app_version)
         self.load(initial)
 

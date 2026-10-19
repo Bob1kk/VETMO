@@ -8,7 +8,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -107,7 +106,7 @@ class PrioritiesDialog(QDialog):
             item.setToolTip(hero.name)
             self._all.addItem(item)
 
-    def _build_positions(self) -> QFrame:
+    def _build_positions(self) -> QWidget:
         grid_box = QGroupBox("Приоритет героев по позициям", self)
         grid = QGridLayout(grid_box)
         grid.setContentsMargins(8, 8, 8, 8)

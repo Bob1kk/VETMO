@@ -162,7 +162,7 @@ class MainWindow(QMainWindow):
 
     def _after_hero_count(self, count: object) -> None:
         """Каталог пуст -> первая синхронизация в worker (UI не блокируется)."""
-        number = int(count or 0)
+        number = count if isinstance(count, int) else 0
         if number == 0:
             self.status("Первый запуск: синхронизируем героев с OpenDota…")
             self._start_sync(120, auto=True)
@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         self._news_widget.set_loading()
         start_worker(
             self._vm.fetch_news,
-            on_done=self._vm.publish_news,
+            on_done=lambda result: self._vm.publish_news(*result),
             on_fail=self._on_news_fail,
         )
 
@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
             self.status(f"Настройка сохранена: {done_kind}")
             if done_kind == "theme":
                 app = QApplication.instance()
-                if app is not None:
+                if isinstance(app, QApplication):
                     app.setStyleSheet(theme_for(str(value)))
             if self._overlay_visible:
                 self._overlay.apply_settings()
