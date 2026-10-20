@@ -178,10 +178,17 @@ class OverlayWindow(QWidget):
 
     def _apply_settings(self) -> None:
         """Позиция, прозрачность, click-through — из SettingsService."""
+        was_visible = self.isVisible()
         x, y = self._settings.get_overlay_position()
         self.move(int(x), int(y))
         self.setWindowOpacity(max(0.1, min(1.0, self._settings.get_opacity())))
         click_through = self._settings.get_click_through()
-        self.setWindowFlag(
-            Qt.WindowType.WindowTransparentForInput, click_through)
+        flag = Qt.WindowType.WindowTransparentForInput
+        if bool(self.windowFlags() & flag) != click_through:
+            # setWindowFlag на видимом окне пересоздаёт native window и
+            # скрывает его — возвращаем оверлей на экран после смены флага.
+            self.setWindowFlag(flag, click_through)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        if was_visible and not self.isVisible():
+            self.show()
+            self.adjustSize()

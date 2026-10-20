@@ -50,7 +50,8 @@ _POSITION_CHIPS: tuple[tuple[str, int | None], ...] = (
 )
 _RANK_CHIPS: tuple[tuple[str, int | None], ...] = (
     ("Все", None), ("Herald", 1), ("Guardian", 2), ("Crusader", 3),
-    ("Archon", 4), ("Legend", 5), ("Ancient", 6), ("Immortal", 7),
+    ("Archon", 4), ("Legend", 5), ("Ancient", 6), ("Divine", 7),
+    ("Immortal", 8),
 )
 
 

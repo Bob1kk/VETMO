@@ -18,7 +18,6 @@ from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import Hero
 from vetmo.infra.http_client import build_http_client
-from vetmo.infra.proxy import system_proxy_url
 from vetmo.services.validator_service import ValidatorService
 
 logger = logging.getLogger("vetmo.opendota")
@@ -58,9 +57,7 @@ class OpenDotaClient:
         self._validator = validator
         self._engine = engine
         self._sessionmaker = sessionmaker
-        proxy_url = system_proxy_url()
-        proxy = httpx.Proxy(proxy_url) if proxy_url else None
-        self._http = http_client or httpx.Client(timeout=settings.http_timeout, proxy=proxy)
+        self._http = http_client or build_http_client(settings.http_timeout)
         self._min_interval = 60.0 / max(1, int(settings.rate_limit_per_min))
         self._last_request_time = 0.0
         self.retry_delays: tuple[float, ...] = (0.5, 1.0, 2.0)
@@ -121,8 +118,12 @@ class OpenDotaClient:
         return elapsed_hours < float(self._settings.cache_ttl_hours)
 
     # --- синхронизация героев ---
-    def sync_heroes(self, limit: int = 120) -> SyncResult:
+    def sync_heroes(self, limit: int = 0) -> SyncResult:
         """GET heroStats -> upsert героев + мета v2; кэш TTL -> сеть не трогается.
+
+        limit: 0 — синхронизировать всех героев (каталог OpenDota растёт,
+        фиксированные 120 оставляли новых героев без данных и искажали
+        pick_rate, посчитанный по урезанной выборке).
 
         Мета: (1) rank_tier=None — общий pub: win=pub_win/pub_pick*100,
         pick — относительная доля pub_pick *1000 (кап 100); (2) для каждого
@@ -138,7 +139,7 @@ class OpenDotaClient:
         data = self._request("heroStats")
         if not isinstance(data, list):
             logger.warning("heroStats недоступен — offline, БД не тронута")
-            return SyncResult(skipped=limit)
+            return SyncResult(skipped=max(1, limit))
         data = data[:limit] if limit and limit > 0 else data
         records = [r for r in data if isinstance(r, dict)]
 
@@ -150,18 +151,19 @@ class OpenDotaClient:
             for tier in RANK_TIERS
         }
         totals: dict[int, float] = {0: total_pub_pick, **tier_totals}
-        patch: int | None = None
-        if total_pub_pick > 0:
-            patch = MetaRepository.ensure_patch(
-                session, PATCH_PUBLIC_LADDER, datetime.now(UTC).replace(tzinfo=None),
-                "Бета-мета: pub_pick/pub_win из OpenDota heroStats",
-            )
-        meta_repo = MetaRepository(session)
-        hero_repo = HeroRepository(self._sessionmaker())
-        session = hero_repo._session  # noqa: SLF001 — sessionmaker создаёт здесь
+
         ok = quarantined = 0
-        try:
+        with self._sessionmaker() as session:
+            meta_repo = MetaRepository(session)
+            hero_repo = HeroRepository(session)
             settings_repo = SettingsRepository(session)
+            patch: int | None = None
+            if total_pub_pick > 0:
+                patch = MetaRepository.ensure_patch(
+                    session, PATCH_PUBLIC_LADDER,
+                    datetime.now(UTC).replace(tzinfo=None),
+                    "Бета-мета: pub_pick/pub_win из OpenDota heroStats",
+                )
             for record in records:
                 hero = self._map_hero(record)
                 if hero is None:
@@ -185,9 +187,6 @@ class OpenDotaClient:
                 ok += 1
             settings_repo.set(
                 _KEY_LAST_SYNC_HEROES, datetime.now(UTC).isoformat())
-            session.commit()
-        finally:
-            session.close()
         return SyncResult(total=len(data), ok=ok, quarantined=quarantined)
 
     def _write_meta_rows(

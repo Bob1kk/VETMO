@@ -163,7 +163,9 @@ class CVService:
             logger.warning("mss недоступен — захват экрана невозможен")
             return None
         try:
-            with mss.mss() as sct:
+            # mss>=10: mss.mss() устарел, актуальный конструктор — mss.MSS().
+            factory = getattr(mss, "MSS", None) or mss.mss
+            with factory() as sct:
                 if region is None:
                     monitor = sct.monitors[1]  # основной монитор
                     left, top, width, height = (

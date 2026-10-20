@@ -117,8 +117,17 @@ class SettingsService:
                 position = int(key)
             except (TypeError, ValueError):
                 continue
-            if 1 <= position <= 5:
-                result[position] = [int(x) for x in ids if int(x) >= 1]
+            if not 1 <= position <= 5 or not isinstance(ids, list):
+                continue
+            parsed: list[int] = []
+            for raw in ids:
+                try:
+                    hero_id = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if hero_id >= 1:
+                    parsed.append(hero_id)
+            result[position] = parsed
         return result
 
     def set_position_priorities(self, priorities: dict[int, list[int]]) -> None:

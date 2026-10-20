@@ -140,6 +140,30 @@ def test_fill_dire_column_respects_show_dire_setting(overlay_window) -> None:
     assert not window._radiant.isHidden()
 
 
+def test_apply_settings_keeps_visible_overlay(overlay_window) -> None:
+    """Смена click-through на видимом оверлее не скрывает окно.
+
+    Регрессия: setWindowFlag пересоздаёт native window и прятал оверлей
+    после изменения настроек из лаунчера.
+    """
+    window, settings_service, _, _ = overlay_window
+    flag = Qt.WindowType.WindowTransparentForInput
+    settings_service.set_click_through(True)
+    window.apply_settings()
+    window.show()
+    assert window.isVisible()
+
+    settings_service.set_click_through(False)
+    window.apply_settings()
+    assert window.isVisible()
+    assert not bool(window.windowFlags() & flag)
+
+    settings_service.set_click_through(True)
+    window.apply_settings()
+    assert window.isVisible()
+    assert bool(window.windowFlags() & flag)
+
+
 def test_update_overlay_with_draft_service_does_not_crash(
     overlay_window, qtbot,
 ) -> None:

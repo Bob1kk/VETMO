@@ -174,6 +174,39 @@ def test_delta_calculation_flow(
     assert second.delta_ban == 1.5
 
 
+def test_position_filter_no_underfill(
+    db_engine: tuple[Engine, sessionmaker[Session]],
+    heroes: list[Hero],
+) -> None:
+    """pos-фильтр не теряет строки: SQL LIMIT не применяется до фильтра.
+
+    Регрессия: limit*2 берёт только топ по WR; если там нет героев нужной
+    позиции, результат пуст/недобран.
+    """
+    _, sessionmaker = db_engine
+    with sessionmaker() as session:
+        repo = HeroRepository(session)
+        for hero_id in range(10, 20):
+            repo.upsert(Hero(
+                id=hero_id, name=f"support-{hero_id}",
+                localized_name=f"Support {hero_id}", primary_attr="int",
+                attack_type="Ranged", roles=["Hard Support"], icon_url=None))
+        for hero_id in range(20, 25):
+            repo.upsert(Hero(
+                id=hero_id, name=f"carry-{hero_id}",
+                localized_name=f"Carry {hero_id}", primary_attr="agi",
+                attack_type="Melee", roles=["Carry"], icon_url=None))
+    with sessionmaker() as session:
+        repo = MetaRepository(session)
+        patch = repo.ensure_patch(session, "7.55", None)
+        for hero_id in range(10, 20):
+            repo.upsert(patch, hero_id, 60.0 - (hero_id - 10) * 0.1, 5.0)
+        for hero_id in range(20, 25):
+            repo.upsert(patch, hero_id, 49.0 - (hero_id - 20) * 0.1, 5.0)
+        rows = repo.get_top_meta(limit=5, position=1)
+    assert [row.hero_id for row in rows] == [20, 21, 22, 23, 24]
+
+
 def test_position_filter(
     db_engine: tuple[Engine, sessionmaker[Session]],
     heroes: list[Hero],

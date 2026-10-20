@@ -1,7 +1,5 @@
 """Сервис драфта 2-2-1 и рекомендации героев. Контракт T-012 (DraftService)."""
 
-import json
-
 from sqlalchemy.orm import Session, sessionmaker
 
 from vetmo.data.models_orm import DraftSessionORM
@@ -9,7 +7,6 @@ from vetmo.data.repositories.counter_repo import CounterRepository
 from vetmo.data.repositories.draft_repo import DraftRepository
 from vetmo.data.repositories.hero_repo import HeroRepository
 from vetmo.data.repositories.meta_repo import MetaRepository
-from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import DraftSession, Hero, Pick, Team
 from vetmo.domain.rules import (
     is_valid_step,
@@ -19,9 +16,17 @@ from vetmo.domain.rules import (
 )
 from vetmo.services.settings_service import SettingsService
 
-_KEY_PRIORITIES = "position_priorities"
 _PRIORITY_BONUS = 10.0
 _POSITION_FIT_WEIGHT = 5.0
+_TOOLTIP_ROWS = 5
+
+
+def _team_on_clock(state: DraftSession) -> Team | None:
+    """Команда, которая пикает на текущем шаге, или None (драфт завершён)."""
+    try:
+        return team_for_step(state.current_step)
+    except ValueError:
+        return None
 
 
 class DraftService:
@@ -126,38 +131,23 @@ class DraftService:
         """Приоритеты: от SettingsService, если привязан, иначе из БД."""
         if self._settings_service is not None:
             return self._settings_service.get_position_priorities()
-        return self._read_priorities()
-
-    def _read_priorities(self) -> dict[int, list[int]]:
-        """Приоритеты позиций из user_settings."""
-        with self._sessionmaker() as session:
-            raw = SettingsRepository(session).get(_KEY_PRIORITIES)
-            if not raw:
-                return {}
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        priorities: dict[int, list[int]] = {}
-        for key, ids in data.items():
-            try:
-                pos = int(key)
-            except (TypeError, ValueError):
-                continue
-            if 1 <= pos <= 5:
-                priorities[pos] = [int(h) for h in ids if int(h) >= 1]
-        return priorities
+        return SettingsService(self._sessionmaker).get_position_priorities()
 
     def get_recommendations(
         self, position: int, session_id: int | None = None,
-        limit: int = 5,
+        limit: int = 5, team: Team | None = None,
     ) -> list[tuple[Hero, float]]:
-        """[(Hero, score)] по убыванию; без меты/контрпиков — приоритеты и каталог."""
+        """[(Hero, score)] по убыванию; без меты/контрпиков — приоритеты и каталог.
+
+        team — перспектива (чья колонка рекомендаций); по умолчанию команда,
+        которая пикает на текущем шаге. Контрпики считаются против соперника
+        именно этой команды.
+        """
         if not 1 <= position <= 5:
             raise ValueError(f"Позиция вне 1..5: {position}")
-        priorities = self._read_priorities()
+        if limit <= 0:
+            return []
+        priorities = self._get_priorities()
         with self._sessionmaker() as session:
             heroes = HeroRepository(session).get_all()
             if not heroes:
@@ -168,15 +158,14 @@ class DraftService:
                 state = DraftRepository(session).get_session(session_id)
                 if state is not None:
                     picked = {p.hero_id for p in state.picks}
-                    if state.picks:
-                        own_team: Team = state.picks[-1].team  # noqa: F841
+                    perspective = team or _team_on_clock(state)
+                    if perspective is not None:
                         enemy_ids = {
                             p.hero_id for p in state.picks
-                            if p.team != state.picks[-1].team
+                            if p.team != perspective
                         }
             meta_repo = MetaRepository(session)
             counter_repo = CounterRepository(session)
-            priorities = self._get_priorities()
             candidates: list[tuple[Hero, float]] = []
             for hero in heroes:
                 if hero.id in picked:
@@ -188,6 +177,27 @@ class DraftService:
                 candidates.append((hero, score))
             candidates.sort(key=lambda t: (-t[1], t[0].localized_name))
             return candidates[:limit]
+
+    def get_matchup_tooltip(
+        self, hero_id: int,
+    ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]] | None:
+        """(strong, weak) для rich-tooltip: [(имя, Δ winrate), ...] или None.
+
+        Δ считается от 50%: у weak отрицательная (герой проигрывает врагу).
+        None — контрпиков с достоверной выборкой нет.
+        """
+        with self._sessionmaker() as session:
+            repo = CounterRepository(session)
+            strong = repo.top_advantages(hero_id, limit=_TOOLTIP_ROWS)
+            weak = repo.top_disadvantages(hero_id, limit=_TOOLTIP_ROWS)
+        if not strong and not weak:
+            return None
+        return (
+            [(hero.localized_name or hero.name, round(wr - 50.0, 2))
+             for hero, wr in strong],
+            [(hero.localized_name or hero.name, round(50.0 - wr, 2))
+             for hero, wr in weak],
+        )
 
     def _score_hero(
         self, session: Session, hero: Hero, position: int,

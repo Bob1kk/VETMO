@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import QCoreApplication, QThreadPool
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -52,6 +52,20 @@ def app_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             total=0, ok=0),
     )
     monkeypatch.setattr(
+        OpenDotaClient,
+        "sync_matchups_all",
+        lambda self, resume=True, min_games=100: {
+            "total": 0, "synced": 0, "skipped": 0, "last_hero_id": None,
+        },
+    )
+    monkeypatch.setattr(
+        OpenDotaClient,
+        "sync_icon_cache",
+        lambda self, icons_dir="", http_client=None: {
+            "downloaded": 0, "cached": 0, "failed": 0,
+        },
+    )
+    monkeypatch.setattr(
         SupabaseClient,
         "sync_meta_snapshot",
         lambda self, limit=50: {"enabled": False, "sent": 0},
@@ -65,7 +79,16 @@ def app_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 def _drain_workers() -> None:
     """Хвост синхронизации: ждём QThreadPool, чтобы не утечь в другой тест."""
-    QThreadPool.globalInstance().waitForDone(8000)
+    pool = QThreadPool.globalInstance()
+    app = QCoreApplication.instance()
+    for _ in range(5):
+        if app is not None:
+            app.processEvents()
+        pool.waitForDone(8000)
+        if app is not None:
+            app.processEvents()
+        if pool.activeThreadCount() == 0:
+            return
 
 
 @pytest.fixture()

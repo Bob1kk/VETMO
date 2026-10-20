@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
         number = count if isinstance(count, int) else 0
         if number == 0:
             self.status("Первый запуск: синхронизируем героев с OpenDota…")
-            self._start_sync(120, auto=True)
+            self._start_sync(auto=True)
         else:
             self.status(f"Готово. Героев в базе: {number}")
             self._refresh_overlay()
@@ -259,7 +259,7 @@ class MainWindow(QMainWindow):
             "supabase": supabase, "icons": icons,
         }
 
-    def _start_sync(self, limit: int = 120, auto: bool = False) -> None:
+    def _start_sync(self, limit: int = 0, auto: bool = False) -> None:
         """Кнопка «Синхронизировать данные» (или первый запуск)."""
         self._settings_panel.set_sync_enabled(False)
         self.status("⏳ Синхронизация данных OpenDota — зависит от сети…")
@@ -392,15 +392,20 @@ class MainWindow(QMainWindow):
 
     def _on_priorities_saved(self, priorities: dict) -> None:
         """Запись приоритетов в БД (worker); затем перестройка оверлея."""
+        def done(_: object) -> None:
+            self.status("Приоритеты позиций сохранены")
+            self._vm.notify_priorities_saved(priorities)
+            if self._overlay_visible:
+                # Refresh только после коммита: иначе воркер прочитает старые
+                # приоритеты из БД (гонка записи и чтения).
+                self._refresh_overlay()
+
         start_worker(
             self._ctx.settings_service.set_position_priorities,
             priorities,
-            on_done=lambda _: self.status("Приоритеты позиций сохранены"),
+            on_done=done,
             on_fail=self._default_fail,
         )
-        self._vm.notify_priorities_saved(priorities)
-        if self._overlay_visible:
-            self._refresh_overlay()
 
     # ------------------------------------------------------------- драфт --
     def _start_draft_session(self) -> None:

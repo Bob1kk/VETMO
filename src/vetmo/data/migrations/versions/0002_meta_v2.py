@@ -1,4 +1,4 @@
-"""РњРёРіСЂР°С†РёСЏ meta v2: ban_rate/РґРµР»СЊС‚С‹/rank_tier РІ meta_snapshots + news_items.
+"""Миграция meta v2: ban_rate/дельты/rank_tier в meta_snapshots + news_items.
 
 Revision ID: 0002
 Revises: 0001
@@ -19,7 +19,7 @@ down_revision: str | Sequence[str] | None = "0001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# РќРѕРІС‹Рµ РєРѕР»РѕРЅРєРё meta_snapshots: {РёРјСЏ: (С‚РёРї, server_default)}
+# Новые колонки meta_snapshots: {имя: (тип, server_default)}
 _NEW_COLUMNS: dict[str, tuple[sa.types.TypeEngine[sa.Any], str | None]] = {
     "ban_rate": (sa.Float(), "0"),
     "delta_win": (sa.Float(), None),
@@ -30,7 +30,7 @@ _NEW_COLUMNS: dict[str, tuple[sa.types.TypeEngine[sa.Any], str | None]] = {
 
 
 def upgrade() -> None:
-    """meta_snapshots: РєРѕР»РѕРЅРєРё v2 + СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ (patch, hero, tier); news_items."""
+    """meta_snapshots: колонки v2 + уникальность (patch, hero, tier); news_items."""
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
@@ -46,8 +46,8 @@ def upgrade() -> None:
                     name, col_type, nullable=False,
                     server_default=sa.text(server_default)))
 
-        # РЈРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ v1 (patch_id, hero_id, name=uq_meta_patch_hero) ->
-        # v2 вЂ” СѓРЅРёРєР°Р»СЊРЅС‹Р№ РёРЅРґРµРєСЃ (patch_id, hero_id, rank_tier).
+        # Уникальность v1 (patch_id, hero_id, name=uq_meta_patch_hero) ->
+        # v2 — уникальный индекс (patch_id, hero_id, rank_tier).
         existing = {
             u["name"] for u in inspector.get_unique_constraints("meta_snapshots")
         }
@@ -61,7 +61,7 @@ def upgrade() -> None:
                 unique=True,
             )
 
-    # news_items РјРѕР¶РµС‚ РѕС‚СЃСѓС‚СЃС‚РІРѕРІР°С‚СЊ РІ Р‘Р” РґРѕ R2 (0001 create_all РµС‘ РЅРµ Р·РЅР°Р»).
+    # news_items может отсутствовать в БД до R2 (0001 create_all её не знал).
     Base.metadata.create_all(
         bind,
         tables=[cast(Table, NewsItemORM.__table__)],
@@ -70,7 +70,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """meta_snapshots: РѕР±СЂР°С‚РЅРѕ Рє v1 (drop РЅРѕРІС‹С… РєРѕР»РѕРЅРѕРє Рё СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚Рё)."""
+    """meta_snapshots: обратно к v1 (drop новых колонок и уникальности)."""
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     columns = {c["name"] for c in inspector.get_columns("meta_snapshots")}

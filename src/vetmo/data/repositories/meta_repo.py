@@ -137,6 +137,8 @@ class MetaRepository:
         rank_tier: None — общий тир (rank_tier IS NULL), 1..8 — ранговый тир.
         position: 1..5 — фильтр по ролям героя (POSITION_ROLES); None — без фильтра.
         """
+        if limit <= 0:
+            return []
         tier_expr = MetaSnapshotORM.rank_tier.is_(None) if rank_tier is None else (
             MetaSnapshotORM.rank_tier == rank_tier
         )
@@ -148,8 +150,11 @@ class MetaRepository:
             .order_by(
                 MetaSnapshotORM.win_rate.desc(), MetaSnapshotORM.pick_rate.desc(),
                 HeroORM.localized_name.asc())
-            .limit(max(0, limit) * 2 if position else limit)
         )
+        # Позиция фильтруется в Python по ролям: SQL LIMIT до фильтра давал
+        # недобор строк (limit*2 могло не содержать ни одного героя позиции).
+        if position is None:
+            stmt = stmt.limit(limit)
         rows = self._session.execute(stmt).all()
         result: list[MetaRow] = []
         for hero_orm, snapshot in rows:
@@ -157,7 +162,7 @@ class MetaRepository:
                     list(hero_orm.roles or [])):
                 continue
             result.append(self._to_meta_row(hero_orm, snapshot))
-            if len(result) >= max(0, limit):
+            if len(result) >= limit:
                 break
         return result
 

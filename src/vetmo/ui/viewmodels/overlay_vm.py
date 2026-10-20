@@ -10,14 +10,14 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from vetmo.domain.models import DraftSession, Hero
+from vetmo.domain.models import DraftSession, Hero, Team
 from vetmo.domain.rules import TOTAL_PICKS
 from vetmo.services.draft_service import DraftService
 from vetmo.services.news_service import NewsService
 from vetmo.services.settings_service import SettingsService
 
-_TEAM_RADIANT = "radiant"
-_TEAM_DIRE = "dire"
+_TEAM_RADIANT: Team = "radiant"
+_TEAM_DIRE: Team = "dire"
 
 
 @dataclass
@@ -97,9 +97,9 @@ class OverlayViewModel:
             total=state.total_picks,
             next_team=_next_team(state),
         )
-        opponents = _opponent_hero_ids(state)
         priorities = self._settings.get_position_priorities()
         for team in (_TEAM_RADIANT, _TEAM_DIRE):
+            opponents = _opponent_hero_ids(state, team)
             taken = [p.position for p in state.picks if p.team == team]
             for position in range(1, 6):
                 snapshot.picked[team][position] = (
@@ -108,7 +108,7 @@ class OverlayViewModel:
                 if position in taken:
                     continue  # позиция занята — карточку рекомендаций не пикаем
                 snapshot.columns[team][position] = self._entries_for(
-                    position, state, opponents, priorities, meta_wr, limit,
+                    position, team, state, opponents, priorities, meta_wr, limit,
                 )
         return snapshot
 
@@ -116,6 +116,7 @@ class OverlayViewModel:
     def _entries_for(
         self,
         position: int,
+        team: Team,
         state: DraftSession,
         opponents: set[int],
         priorities: dict[int, list[int]],
@@ -123,7 +124,8 @@ class OverlayViewModel:
         limit: int,
     ) -> list[OverlayEntry]:
         """Рекомендации позиции с причинами (приоритет > контр-пик > мета)."""
-        recs = self._draft.get_recommendations(position, state.id, limit)
+        recs = self._draft.get_recommendations(
+            position, state.id, limit, team=team)
         baseline: dict[int, float] = {}
         if opponents:
             base = self._draft.get_recommendations(
@@ -182,12 +184,9 @@ def _next_team(state: DraftSession) -> str:
         return _TEAM_RADIANT
 
 
-def _opponent_hero_ids(state: DraftSession) -> set[int]:
-    """Id героев обеих команд, кроме героев команды последнего пика."""
-    if not state.picks:
-        return set()
-    last_team = state.picks[-1].team
-    return {p.hero_id for p in state.picks if p.team != last_team}
+def _opponent_hero_ids(state: DraftSession, team: Team) -> set[int]:
+    """Id героев соперника указанной команды (для контр-пик скоринга)."""
+    return {p.hero_id for p in state.picks if p.team != team}
 
 
 def _classify_reason(

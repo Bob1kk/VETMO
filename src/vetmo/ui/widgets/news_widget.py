@@ -172,9 +172,15 @@ class NewsWidget(QFrame):
 
     # --- внутренние ---
     def _clear_rows(self) -> None:
-        for row in self._rows:
-            self._rows_layout.removeWidget(row)
-            row.deleteLater()
+        # Удаляем и строки, и распорку addStretch: иначе при каждом
+        # обновлении новостей в layout накапливались бы пустые stretch-итемы.
+        while self._rows_layout.count():
+            item = self._rows_layout.takeAt(0)
+            if item is None:
+                break
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
         self._rows.clear()
 
     def _scroll_to_top(self) -> None:

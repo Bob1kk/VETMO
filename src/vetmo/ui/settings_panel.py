@@ -98,7 +98,7 @@ class SettingsPanel(QFrame):
         self._sync_button.setToolTip(
             "Загружает героев и матчапы из OpenDota (до ~15 секунд).")
         self._sync_button.clicked.connect(
-            lambda: self.sync_requested.emit(120))
+            lambda: self.sync_requested.emit(0))  # 0 — все герои
         self._supabase_note = QLabel(self)
         self._supabase_note.setObjectName("mutedSmall")
         self._supabase_note.setWordWrap(True)

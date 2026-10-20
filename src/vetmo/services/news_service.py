@@ -15,7 +15,7 @@ from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import Hero
 from vetmo.infra.config import Settings
-from vetmo.infra.proxy import system_proxy_url
+from vetmo.infra.http_client import build_http_client
 
 logger = logging.getLogger("vetmo.news")
 
@@ -53,9 +53,7 @@ class NewsService:
     ) -> None:
         self._sessionmaker = sessionmaker
         self._settings = settings
-        proxy_url = system_proxy_url()
-        proxy = httpx.Proxy(proxy_url) if proxy_url else None
-        self._http = http_client or httpx.Client(timeout=settings.http_timeout, proxy=proxy)
+        self._http = http_client or build_http_client(settings.http_timeout)
 
     def get_latest_patch_news(self, limit: int = 5) -> tuple[list[NewsItem], bool]:
         """(items, is_online): Steam RSS, TTL 6ч; сбой сети -> из БД + False.

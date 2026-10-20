@@ -9,6 +9,13 @@ One-file GUI-сборка точки входа src/vetmo/main.py без кон�
 import os
 
 ROOT = os.path.abspath(os.path.dirname(SPEC))
+_ICONS_DIR = os.path.join(ROOT, "assets", "cache", "icons")
+# assets/ наполняется в рантайме и отсутствует в свежем клоне — сборка
+# не должна падать на os.listdir несуществующей папки.
+_ICON_FILES = (
+    sorted(n for n in os.listdir(_ICONS_DIR) if n.endswith(".png"))
+    if os.path.isdir(_ICONS_DIR) else []
+)
 
 # Тяжёлые библиотеки, не входящие в зависимости проекта, не тащим.
 _EXCLUDES = [
@@ -41,17 +48,11 @@ a = Analysis(
             os.path.join(ROOT, "src", "vetmo", "data", "migrations"),
             os.path.join("vetmo", "data", "migrations"),
         ),
-        # Кэш иконок всех героев (_literals 127 png) — офлайн-иконки в exe.
+        # Кэш иконок всех героев (если он собран) — офлайн-иконки в exe.
         *(
-            (src_path, os.path.join("assets", "cache", "icons"))
-            for src_path in [
-                os.path.join(ROOT, "assets", "cache", "icons", f)
-                for f in sorted(
-                    n for n in os.listdir(
-                        os.path.join(ROOT, "assets", "cache", "icons"))
-                    if n.endswith(".png")
-                )
-            ]
+            (os.path.join(_ICONS_DIR, name),
+             os.path.join("assets", "cache", "icons"))
+            for name in _ICON_FILES
         ),
     ],
     hiddenimports=["logging.config", "logging.handlers"],

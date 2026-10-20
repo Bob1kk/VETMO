@@ -64,6 +64,28 @@ def test_sync_heroes_parses_and_saves(db) -> None:
     assert axe.localized_name == "Axe"
 
 
+def test_sync_heroes_default_syncs_all_heroes(db) -> None:
+    """По умолчанию синхронизируются ВСЕ герои, а не первые 120.
+
+    Регрессия: каталог OpenDota вырос до 127 героев; фиксированный лимит
+    оставлял новых героев без данных.
+    """
+    stats = [
+        {**HERO_STATS[0], "id": hero_id, "name": f"npc_dota_hero_{hero_id}"}
+        for hero_id in range(1, 122)
+    ]
+
+    def ok(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=stats)
+
+    client = _mk_client(db, ok)
+    result = client.sync_heroes()
+    assert result.total == 121 and result.ok == 121
+    _, sessionmaker = db
+    with sessionmaker() as session:
+        assert HeroRepository(session).count() == 121
+
+
 def test_sync_heroes_dedup_on_resync(db) -> None:
     """Повторный sync не создаёт дублей (Review Focus #3), кэш не даёт сеть."""
     calls = []

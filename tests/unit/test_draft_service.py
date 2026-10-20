@@ -2,6 +2,7 @@
 
 import pytest
 
+from vetmo.data.repositories.counter_repo import CounterRepository
 from vetmo.data.repositories.hero_repo import HeroRepository
 from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import Hero
@@ -173,3 +174,68 @@ def test_recommendations_use_settings_service_priorities(db) -> None:
     recs = service.get_recommendations(1, limit=3)
     assert recs[0][0].id == 104
     assert recs[0][1] == 10.0
+
+
+def test_recommendations_use_enemy_of_team_on_clock(db) -> None:
+    """Шаг 2: пикает Dire — контрпики считаются против героев Radiant.
+
+    Регрессия: enemy_ids строился от команды последнего пика (Radiant),
+    поэтому на шаге Dire «соперниками» оказывались его же будущие пики.
+    """
+    _, sessionmaker = db
+    _add_heroes(sessionmaker)
+    with sessionmaker() as session:
+        counters = CounterRepository(session)
+        counters.upsert(108, 105, 60.0, 1000)
+        counters.upsert(109, 106, 60.0, 1000)
+    service = DraftService(sessionmaker)
+    state = service.start_session()
+    state = service.add_pick_auto(1, hero_id=105, session_id=state.id)
+    state = service.add_pick_auto(2, hero_id=106, session_id=state.id)
+    assert state.current_step == 2
+    recs = service.get_recommendations(1, session_id=state.id, limit=2)
+    assert [hero.id for hero, _ in recs] == [108, 109]
+
+
+def test_recommendations_team_perspective(db) -> None:
+    """team= переключает перспективу: контрпики против соперника колонки."""
+    _, sessionmaker = db
+    _add_heroes(sessionmaker)
+    with sessionmaker() as session:
+        counters = CounterRepository(session)
+        counters.upsert(107, 100, 60.0, 1000)
+        counters.upsert(108, 101, 60.0, 1000)
+        counters.upsert(109, 102, 60.0, 1000)
+    service = DraftService(sessionmaker)
+    state = service.start_session()
+    state = service.add_pick_auto(1, hero_id=100, session_id=state.id)
+    state = service.add_pick_auto(2, hero_id=101, session_id=state.id)
+    state = service.add_pick_auto(1, hero_id=102, session_id=state.id)
+
+    dire = service.get_recommendations(
+        1, session_id=state.id, limit=2, team="dire")
+    assert [hero.id for hero, _ in dire] == [107, 108]
+    # Без team — колонка команды на часах (Dire).
+    default = service.get_recommendations(1, session_id=state.id, limit=2)
+    assert [hero.id for hero, _ in default] == [107, 108]
+
+    radiant = service.get_recommendations(
+        1, session_id=state.id, limit=2, team="radiant")
+    assert [hero.id for hero, _ in radiant] == [109, 103]
+
+
+def test_matchup_tooltip(db) -> None:
+    """get_matchup_tooltip: strong/weak с Δ от 50% и фильтром выборки >= 100."""
+    _, sessionmaker = db
+    _add_heroes(sessionmaker)
+    with sessionmaker() as session:
+        counters = CounterRepository(session)
+        counters.upsert(100, 101, 57.5, 1000)  # 100 силён против 101
+        counters.upsert(102, 100, 54.0, 1000)  # 102 контрит 100
+        counters.upsert(103, 100, 70.0, 50)    # выборка < 100 — мимо
+    service = DraftService(sessionmaker)
+    assert service.get_matchup_tooltip(100) == (
+        [("Hero 101", 7.5)],
+        [("Hero 102", -4.0)],
+    )
+    assert service.get_matchup_tooltip(104) is None
