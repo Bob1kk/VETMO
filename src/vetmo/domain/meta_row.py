@@ -1,19 +1,37 @@
-"""Строка мета-топа для UI: герой + win/pick/ban + дельты. Контракт R2 (задача 2)."""
+"""Контракт строки мета-отчёта для UI: герой + win/pick/ban + позиции."""
 
 from dataclasses import dataclass, field
 
 from vetmo.domain.models import Hero
 
 
+@dataclass(frozen=True)
+class PatchInfo:
+    """Патч для поиска/выбора в UI."""
+
+    id: int
+    version: str
+    release_date: str | None = None
+    is_current: bool = False
+
+
+@dataclass(frozen=True)
+class PositionStat:
+    """Популярность и винрейт героя на конкретной позиции."""
+
+    position: int
+    pick_share: float | None = None
+    win_rate: float | None = None
+    match_count: int = 0
+
+
 @dataclass
 class MetaRow:
-    """Одна строка мета-топа.
+    """Нормализованная строка мета-отчёта.
 
-    rank_tier=None соответствует общему паблик-тиру; 1..8 — ранговым.
-    delta_* разница относительно предыдущего снэпшота того же ключа
-    (None — впервые записано). ban_rate заполнен только для общего среза:
-    OpenDota отдаёт pro-баны без разбивки по рангам. positions — подходящие
-    позиции 1..5 по roles героя (POSITION_ROLES).
+    positions — только реальные популярные позиции из STRATZ, а не роли героя.
+    delta_* — изменение за 7 дней; None, если истории ещё нет.
+    ban_scope — группа рангов для ladder-банов (STRATZ отдаёт баны группами).
     """
 
     hero_id: int
@@ -26,4 +44,9 @@ class MetaRow:
     ban_rate: float | None = None
     delta_ban: float | None = None
     positions: list[int] = field(default_factory=list)
+    position_stats: dict[int, PositionStat] = field(default_factory=dict)
     patch_version: str | None = None
+    patch_id: int | None = None
+    match_count: int = 0
+    ban_scope: str | None = None
+    sample_reliable: bool = False

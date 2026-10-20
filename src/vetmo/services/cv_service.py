@@ -13,6 +13,7 @@ CV — эксперимент; ручной ввод пиков (T-013) прио
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +46,15 @@ try:  # pragma: no cover - httpx входит в базовые зависимо
 except Exception:  # noqa: BLE001
     httpx = None  # type: ignore[assignment]
 
-_DEFAULT_ICONS_DIR = Path(__file__).resolve().parents[3] / "assets" / "cache" / "icons"
+def _default_icons_dir() -> Path:
+    """Каталог иконок: в one-file exe — распакованные datas в ``_MEIPASS``."""
+    meip = getattr(sys, "_MEIPASS", None)
+    if meip:
+        return Path(meip) / "assets" / "cache" / "icons"
+    return Path(__file__).resolve().parents[3] / "assets" / "cache" / "icons"
+
+
+_DEFAULT_ICONS_DIR = _default_icons_dir()
 _DEFAULT_MIN_CONFIDENCE = 0.82
 _MAX_TEMPLATE_SIZE = 256  # шаблоны крупнее не нужны (иконки OpenDota ~256px)
 _OVERLAP_THRESHOLD = 0.5  # дубликаты: перекрытие bbox > 50%

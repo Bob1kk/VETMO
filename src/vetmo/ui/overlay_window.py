@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from vetmo.services.settings_service import SettingsService
+from vetmo.ui.monitor import overlay_top_left, resolve_screen
 from vetmo.ui.viewmodels.overlay_vm import OverlaySnapshot
 from vetmo.ui.widgets.hero_card import HeroCard
 
@@ -92,7 +93,7 @@ class OverlayColumn(QFrame):
                         wr_text=entry.wr_text(),
                     )
                 else:
-                    card.set_empty("рекомендаций нет — синхронизируйте данные")
+                    card.set_empty("рекомендаций нет — обновите данные")
 
     def set_team_visible(self, visible: bool) -> None:
         """Прячет/показывает колонку (Dire настраивается в лаунчере)."""
@@ -135,8 +136,6 @@ class OverlayWindow(QWidget):
         header_row.setSpacing(8)
         brand = QLabel("VETMO", self)
         brand.setObjectName("overlayBrand")
-        source = QLabel("OPENDOTA · LIVE", self)
-        source.setObjectName("overlaySource")
         self._step = QLabel("00/10 · RADIANT", self)
         self._step.setObjectName("overlayStep")
         self._step.setAlignment(
@@ -154,7 +153,6 @@ class OverlayWindow(QWidget):
         self._gear.setToolTip("Настройки оверлея")
         self._gear.clicked.connect(self.settings_requested.emit)
         header_row.addWidget(brand)
-        header_row.addWidget(source)
         header_row.addStretch(1)
         header_row.addWidget(self._step)
         header_row.addWidget(self._lock_hint)
@@ -232,7 +230,9 @@ class OverlayWindow(QWidget):
         """Позиция, прозрачность, click-through — из SettingsService."""
         was_visible = self.isVisible()
         x, y = self._settings.get_overlay_position()
-        self.move(int(x), int(y))
+        get_monitor = getattr(self._settings, "get_monitor_index", None)
+        monitor_index = int(get_monitor()) if callable(get_monitor) else -1
+        self.move(overlay_top_left(resolve_screen(monitor_index), x, y))
         self.setWindowOpacity(max(0.1, min(1.0, self._settings.get_opacity())))
         click_through = self._settings.get_click_through()
         flag = Qt.WindowType.WindowTransparentForInput

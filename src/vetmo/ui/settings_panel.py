@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vetmo.ui.monitor import available_screens, screen_label
+
 
 class SettingsPanel(QFrame):
     """Настройки оверлея: позиция, прозрачность, тема, флаги, приоритеты."""
@@ -72,6 +74,11 @@ class SettingsPanel(QFrame):
         form.addRow("Позиция X:", self._pos_x)
         form.addRow("Позиция Y:", self._pos_y)
 
+        # Монитор: лаунчер и оверлей открываются на выбранном экране.
+        self._monitor = QComboBox(self)
+        self._monitor.setObjectName("filterCombo")
+        self._fill_monitors()
+
         # Прозрачность
         opacity_label = QLabel("Прозрачность", self)
         self._opacity_value = QLabel(self)
@@ -105,11 +112,10 @@ class SettingsPanel(QFrame):
         priorities_button = self._button(
             "Настроить приоритеты позиций…", "secondary")
         priorities_button.clicked.connect(self.priorities_requested.emit)
-        self._sync_button = self._button(
-            "Синхронизировать OpenDota", "secondary")
+        self._sync_button = self._button("Обновить данные", "secondary")
         self._sync_button.setToolTip(
-            "Загружает героев, мету, контрпики и иконки из OpenDota. "
-            "Если сеть недоступна, остаются локальные данные.")
+            "Перечитать мету, патчи и новости из Supabase. "
+            "Обновление reference-данных выполняет sync-скрипт по расписанию.")
         self._sync_button.clicked.connect(
             lambda: self.sync_requested.emit(0))  # 0 — все герои
         self._supabase_note = QLabel(self)
@@ -124,6 +130,8 @@ class SettingsPanel(QFrame):
         layout.addSpacing(2)
         layout.addWidget(self._section("ОВЕРЛЕЙ"))
         layout.addLayout(form)
+        layout.addWidget(QLabel("Монитор:", self))
+        layout.addWidget(self._monitor)
         layout.addLayout(opacity_row)
         layout.addWidget(self._opacity)
         layout.addWidget(QLabel("Тема:", self))
@@ -164,8 +172,22 @@ class SettingsPanel(QFrame):
         self._pos_x.editingFinished.connect(self._commit_position)
         self._pos_y.editingFinished.connect(self._commit_position)
         self._theme.activated.connect(self._commit_theme)
+        self._monitor.activated.connect(self._commit_monitor)
         self._click_through.toggled.connect(self._commit_click_through)
         self._show_dire.toggled.connect(self._commit_show_dire)
+
+    def _fill_monitors(self) -> None:
+        """Список экранов: -1 — «второй, если есть»."""
+        self._monitor.clear()
+        screens = available_screens()
+        if len(screens) > 1:
+            self._monitor.addItem("Второй монитор (если есть)", -1)
+        for index, screen in enumerate(screens):
+            suffix = " (основной)" if index == 0 else ""
+            self._monitor.addItem(
+                screen_label(index, screen) + suffix, index)
+        if not screens:
+            self._monitor.addItem("Основной монитор", 0)
 
     # --- загрузка/выгрузка значений ---
     def load(self, initial: dict) -> None:
@@ -178,6 +200,11 @@ class SettingsPanel(QFrame):
         theme = str(initial.get("theme", "dark"))
         index = self._theme.findData(theme)
         self._theme.setCurrentIndex(index if index >= 0 else 0)
+        monitor_index = int(initial.get("monitor", -1))
+        monitor_pos = self._monitor.findData(monitor_index)
+        if monitor_pos < 0:
+            monitor_pos = self._monitor.findData(-1)
+        self._monitor.setCurrentIndex(max(0, monitor_pos))
         self._click_through.setChecked(
             bool(initial.get("click_through", False)))
         self._show_dire.setChecked(bool(initial.get("show_dire", True)))
@@ -192,11 +219,11 @@ class SettingsPanel(QFrame):
             "Скрыть оверлей" if visible else "Показать оверлей")
 
     def set_supabase_note(self, enabled: bool) -> None:
-        """Пояснение про Supabase (env-переменные)."""
+        """Статус Supabase: подключён (STRATZ) либо не настроен."""
         self._supabase_note.setText(
-            "Supabase: подключён (облачная синхронизация)."
+            "Supabase: подключён · данные STRATZ"
             if enabled else
-            "Supabase: не настроен (локальная БД, офлайн-режим).")
+            "Supabase: не настроен · проверьте VETMO_SUPABASE_*")
 
     # --- коммиты (родитель делает запись в БД из worker) ---
     def _commit_position(self) -> None:
@@ -212,6 +239,10 @@ class SettingsPanel(QFrame):
 
     def _commit_theme(self, index: int) -> None:
         self.settings_committed.emit("theme", self._theme.itemData(index))
+
+    def _commit_monitor(self, index: int) -> None:
+        self.settings_committed.emit(
+            "monitor", int(self._monitor.itemData(index) or 0))
 
     def _commit_click_through(self, checked: bool) -> None:
         self.settings_committed.emit("click_through", checked)

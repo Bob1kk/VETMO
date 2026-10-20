@@ -4,8 +4,6 @@
 UI обновляется только из main thread (сигналы Worker).
 """
 
-import logging
-
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -22,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from vetmo import __version__
 from vetmo.ui.app_context import AppContext
+from vetmo.ui.monitor import move_launcher_to_screen, resolve_screen
 from vetmo.ui.overlay_window import OverlayWindow
 from vetmo.ui.settings_panel import SettingsPanel
 from vetmo.ui.theme import theme_for
@@ -33,13 +32,10 @@ from vetmo.ui.widgets.news_widget import NewsWidget
 from vetmo.ui.widgets.priorities_dialog import PrioritiesDialog
 from vetmo.ui.workers import start_worker
 
-logger = logging.getLogger("vetmo.ui.main_window")
-
 _RECS_PER_POSITION = 2
-_MATCHUP_HEROES = 10
 
 
-_NEWS_REFRESH_MS = 15 * 60 * 1000  # новости по таймеру (R2, задача C)
+_NEWS_REFRESH_MS = 60 * 60 * 1000  # новости по таймеру: раз в час (R2, задача C)
 _META_ROWS_LIMIT = 200  # весь каталог Dota 2 (127 героев) + запас
 
 
@@ -57,31 +53,34 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._ctx = context
         self._vm = MainViewModel(
-            context.news_service,
-            context.settings_service,
-            context.draft_service,
+            context.news_service,  # type: ignore[arg-type]
+            context.settings_service,  # type: ignore[arg-type]
+            context.draft_service,  # type: ignore[arg-type]
             meta_report_loader=getattr(context, "meta_report", None),
         )
         self._overlay_vm = OverlayViewModel(
-            context.draft_service,
-            context.settings_service,
-            context.news_service,
+            context.draft_service,  # type: ignore[arg-type]
+            context.settings_service,  # type: ignore[arg-type]
+            context.news_service,  # type: ignore[arg-type]
             hero_lookup=context.get_hero_by_id,
         )
         self._news_widget = NewsWidget()
         self._meta_widget = MetaReportWidget()
-        self._overlay = OverlayWindow(context.settings_service)
+        self._overlay = OverlayWindow(context.settings_service)  # type: ignore[arg-type]
         self._settings_panel = SettingsPanel(
             initial=self._read_settings(), app_version=__version__,
         )
         self._settings_panel.set_supabase_note(
-            bool(context.settings.supabase_url and context.settings.supabase_key)
+            bool(context.settings.supabase_url
+                 and context.settings.supabase_publishable_key)
         )
         context.overlay_service.bind_window(lambda: self._overlay)
         self._overlay.refresh_requested.connect(self._refresh_overlay)
         self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._overlay.set_matchup_loader(self._matchup_loader)
         self._meta_widget.set_matchup_loader(self._matchup_loader)
+        self._meta_widget.set_matchup_details_loader(
+            self._matchup_details_loader)
         self._vm.news_updated.subscribe(self._news_widget.on_news_updated)
         self._vm.meta_updated.subscribe(self._meta_widget.on_meta_report)
         self._meta_widget.filters_changed.connect(self._load_meta)
@@ -100,6 +99,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._build_shortcuts()
+        self._apply_launcher_screen()
         self._startup()
 
     # ---------------------------------------------------------------- UI --
@@ -145,9 +145,6 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(mark)
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)
-        source_pill = QLabel("OPENDOTA · PUBLIC LADDER", header)
-        source_pill.setObjectName("headerPill")
-        header_layout.addWidget(source_pill)
         header_layout.addWidget(new_session)
         header_layout.addWidget(manual)
         header_layout.addWidget(self._toggle_overlay)
@@ -174,9 +171,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(body, 1)
         self.setCentralWidget(central)
 
-        version_label = _status_label(f"vetmo {__version__}")
         self.statusBar().addWidget(self._status_label, 1)
-        self.statusBar().addPermanentWidget(version_label)
 
     def _build_shortcuts(self) -> None:
         """Esc — скрыть оверлей; Ctrl+Q — выход; F1 — приоритеты позиций."""
@@ -193,6 +188,14 @@ class MainWindow(QMainWindow):
         overlay_settings.setContext(Qt.ShortcutContext.WindowShortcut)
         overlay_settings.activated.connect(self._open_overlay_settings)
 
+    def _apply_launcher_screen(self) -> None:
+        """Открывает лаунчер на выбранном мониторе (по умолчанию второй)."""
+        try:
+            index = self._ctx.settings_service.get_monitor_index()
+            move_launcher_to_screen(self, resolve_screen(index))
+        except Exception:  # noqa: BLE001 - монитор не критичен для запуска
+            pass
+
     # ----------------------------------------------------------- startup --
     def _read_settings(self) -> dict:
         """Снимок настроек для панели (записи делает worker, не UI)."""
@@ -203,11 +206,13 @@ class MainWindow(QMainWindow):
             "theme": service.get_theme(),
             "click_through": service.get_click_through(),
             "show_dire": service.get_show_dire(),
+            "monitor": service.get_monitor_index(),
         }
 
     def _startup(self) -> None:
-        """Первичная загрузка: данные в worker; пустой каталог -> авто-синк."""
-        self.status("Загружаем данные…")
+        """Первичная загрузка: Supabase читается в worker, UI не блокируется."""
+        self.status("Загружаем данные из Supabase…")
+        self._load_patches()
         self._load_news()
         self._load_meta()
         self._news_timer.start()
@@ -218,16 +223,24 @@ class MainWindow(QMainWindow):
         )
 
     def _after_hero_count(self, count: object) -> None:
-        """Каталог пуст -> первая синхронизация в worker (UI не блокируется)."""
+        """Показывает размер каталога; пустой каталог — подсказка про seed."""
         number = count if isinstance(count, int) else 0
         if number == 0:
-            self.status("Первый запуск: синхронизируем героев с OpenDota…")
-            self._start_sync(auto=True)
+            self.status(
+                "Каталог героев пуст: примените миграцию и seed Supabase.")
         else:
-            self.status(f"Готово. Героев в базе: {number}")
-            self._refresh_overlay()
+            self.status(f"Готово. Героев в каталоге: {number}")
+        self._refresh_overlay()
 
     # ------------------------------------------------------- data loading --
+    def _load_patches(self) -> None:
+        """Список патчей для поиска/фильтра (Supabase, worker)."""
+        start_worker(
+            self._ctx.patches, 30,
+            on_done=self._meta_widget.set_patches,
+            on_fail=lambda _msg: None,
+        )
+
     def _load_news(self) -> None:
         """Новости: worker -> MainViewModel -> NewsWidget."""
         self._news_widget.set_loading()
@@ -246,9 +259,10 @@ class MainWindow(QMainWindow):
         """Мета-отчёт с фильтрами: worker -> MainViewModel -> MetaReportWidget."""
         self._meta_widget.set_loading()
         position, rank_tier = self._meta_widget.filters()
+        patch_id = self._meta_widget.selected_patch()
         start_worker(
             self._vm.fetch_meta_report,
-            _META_ROWS_LIMIT, rank_tier, position,
+            _META_ROWS_LIMIT, rank_tier, position, patch_id,
             on_done=self._vm.publish_meta_report,
             on_fail=self._meta_widget.set_error,
         )
@@ -259,6 +273,15 @@ class MainWindow(QMainWindow):
         if getter is None:
             return None
         return getter(hero_id)
+
+    def _matchup_details_loader(
+        self, hero_id: int, rank_tier: int, patch_id: int | None,
+    ):
+        """Диалог матчапов: три десятки по выбранному ранговому срезу."""
+        getter = getattr(self._ctx.draft_service, "get_matchup_report", None)
+        if getter is None:
+            raise RuntimeError("Сервис матчапов недоступен")
+        return getter(hero_id, rank_tier, patch_id)
 
     # ------------------------------------------------------------ статус --
     def status(self, text: str) -> None:
@@ -272,59 +295,35 @@ class MainWindow(QMainWindow):
     def _default_fail(self, message: str) -> None:
         self.status(f"Ошибка: {message}")
 
-    # ------------------------------------------------------------ синхрон --
-    def _sync_job(self, limit: int) -> dict:
-        """Синхронизация: герои+мета v2, контрпики ВСЕХ героев, иконки, Supabase."""
-        heroes = self._ctx.opendota.sync_heroes(limit=limit)
-        matchups = None
-        icons = None
-        if heroes.ok:
-            ids = self._ctx.first_hero_ids(_MATCHUP_HEROES)
-            matchups = self._ctx.opendota.sync_matchups(
-                hero_ids=ids, rivals_per_hero=30)
-            # Фоновое дозаполнение: контрпики всех героев (resume), иконки CDN.
-            try:
-                matchups_all = getattr(
-                    self._ctx.opendota, "sync_matchups_all", None)
-                if callable(matchups_all):
-                    matchups_all(resume=True)
-                icon_sync = getattr(
-                    self._ctx.opendota, "sync_icon_cache", None)
-                if callable(icon_sync):
-                    icons = icon_sync()
-            except Exception as exc:  # noqa: BLE001 — best-effort фон
-                logger.warning("Фоновая дозаправка не удалась: %s", exc)
-        supabase = self._ctx.supabase.sync_meta_snapshot(limit=50)
-        return {
-            "heroes": heroes, "matchups": matchups,
-            "supabase": supabase, "icons": icons,
-        }
-
+    # ------------------------------------------------------------ обновление --
     def _start_sync(self, limit: int = 0, auto: bool = False) -> None:
-        """Кнопка «Синхронизировать данные» (или первый запуск)."""
-        self._settings_panel.set_sync_enabled(False)
-        self.status("Синхронизация данных OpenDota — зависит от сети…")
-        start_worker(
-            self._sync_job, limit,
-            on_done=lambda result: self._sync_done(result),
-            on_fail=self._sync_fail,
-        )
+        """«Обновить данные»: сбросить кэши и перечитать Supabase.
 
-    def _sync_done(self, result: dict) -> None:
-        """Обновляет все экраны после синхронизации."""
+        Reference-данные пишет отдельный sync-скрипт с service_role; приложение
+        никогда не выполняет DDL/запись меты.
+        """
+        self._settings_panel.set_sync_enabled(False)
+        self.status("Перечитываем данные из Supabase…")
+
+        def job() -> int:
+            self._ctx.refresh_reference_data()
+            return self._ctx.hero_count()
+
+        start_worker(job, on_done=self._sync_done, on_fail=self._sync_fail)
+
+    def _sync_done(self, count: object) -> None:
+        """Обновляет все экраны после перечитывания Supabase."""
         self._settings_panel.set_sync_enabled(True)
-        sent = result["supabase"].get("sent", 0) if result["supabase"] else 0
-        cloud = f", Supabase: {sent}" if sent else ""
-        self.status(
-            f"Синхронизация готова: героев {result['heroes'].ok}"
-            f"/{result['heroes'].total}{cloud}")
+        number = count if isinstance(count, int) else 0
+        self.status(f"Данные Supabase обновлены. Героев: {number}")
+        self._load_patches()
         self._load_news()
         self._load_meta()
         self._refresh_overlay()
 
     def _sync_fail(self, message: str) -> None:
         self._settings_panel.set_sync_enabled(True)
-        self.status(f"Синхронизация не удалась: {message}")
+        self.status(f"Не удалось перечитать Supabase: {message}")
         self._load_news()
         self._load_meta()
 
@@ -403,6 +402,8 @@ class MainWindow(QMainWindow):
                 service.set_click_through(bool(value))
             elif kind == "show_dire":
                 service.set_show_dire(bool(value))
+            elif kind == "monitor":
+                service.set_monitor_index(int(value))
             return kind
 
         def done(done_kind: str) -> None:
@@ -411,6 +412,8 @@ class MainWindow(QMainWindow):
                 app = QApplication.instance()
                 if isinstance(app, QApplication):
                     app.setStyleSheet(theme_for(str(value)))
+            if done_kind == "monitor":
+                self._apply_launcher_screen()
             if self._overlay_visible:
                 self._overlay.apply_settings()
                 self._overlay.adjustSize()
@@ -434,7 +437,7 @@ class MainWindow(QMainWindow):
             heroes, priorities = result
             if not heroes:
                 self.status(
-                    "Приоритеты: сначала синхронизируйте каталог героев.")
+                    "Приоритеты: сначала обновите каталог героев.")
                 self._priorities_open = False
                 return
             dialog = PrioritiesDialog(heroes, priorities, self)
@@ -499,7 +502,7 @@ class MainWindow(QMainWindow):
         """Создаёт диалог из каталога героев (пустой каталог -> подсказка)."""
         if not heroes:
             self.status(
-                "Ручной ввод: каталог пуст — запустите синхронизацию данных.")
+                "Ручной ввод: каталог пуст — обновите данные в настройках.")
             return
         dialog = ManualPickDialog(heroes, self)
         dialog.pick_requested.connect(self._on_pick_requested)

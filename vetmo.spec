@@ -48,6 +48,10 @@ a = Analysis(
             os.path.join(ROOT, "src", "vetmo", "data", "migrations"),
             os.path.join("vetmo", "data", "migrations"),
         ),
+        (
+            os.path.join(ROOT, "src", "vetmo", "data", "heroes_seed.json"),
+            os.path.join("vetmo", "data"),
+        ),
         # Кэш иконок всех героев (если он собран) — офлайн-иконки в exe.
         *(
             (os.path.join(_ICONS_DIR, name),
