@@ -84,8 +84,12 @@ class SettingsService:
 
     # --- Флаги оверлея ---
     def get_click_through(self) -> bool:
-        """Дефолт True."""
-        return (self._get(_KEY_CLICK, "1") or "1") == "1"
+        """Дефолт False: оверлей принимает мышь, шестерёнка доступна.
+
+        Click-through остаётся опцией для тех, кто управляет драфтом с
+        клавиатуры и не хочет, чтобы оверлей перехватывал курсор.
+        """
+        return (self._get(_KEY_CLICK, "0") or "0") == "1"
 
     def set_click_through(self, flag: bool) -> None:
         """Сохраняет click-through."""

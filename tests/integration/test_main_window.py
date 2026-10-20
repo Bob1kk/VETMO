@@ -86,3 +86,30 @@ def test_startup_workers_complete_without_crash(
         timeout=10000,
     )
     assert "героев 0/0" in window.status_label_text()
+
+
+def test_overlay_gear_opens_settings_tab(make_window) -> None:
+    """Gear оверлея открывает существующую вкладку настроек, не дублирует её."""
+    window = make_window()
+    assert window._sidebar_tabs.currentWidget() is window._news_widget
+
+    window._overlay.settings_requested.emit()
+    assert window._sidebar_tabs.currentWidget() is window._settings_panel
+
+
+def test_overlay_gear_hides_always_on_top_overlay(make_window) -> None:
+    """Always-on-top оверлей не перекрывает панель настроек после gear."""
+    window = make_window()
+    window._toggle_overlay_clicked()
+    assert window._overlay.isVisible()
+
+    window._overlay.settings_requested.emit()
+    assert not window._overlay.isVisible()
+    assert window._sidebar_tabs.currentWidget() is window._settings_panel
+    assert window._toggle_overlay.text() == OVERLAY_ON
+
+
+def test_settings_panel_describes_supabase_state(make_window) -> None:
+    """Панель данных честно показывает, настроен ли Supabase."""
+    window = make_window()
+    assert window._settings_panel._supabase_note.text().startswith("Supabase:")

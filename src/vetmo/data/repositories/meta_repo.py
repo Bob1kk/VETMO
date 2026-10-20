@@ -37,15 +37,26 @@ class MetaRepository:
     def ensure_patch(
         session: Session, version: str,
         release_date: datetime | None, note: str | None = None,
+        commit: bool = True,
     ) -> int:
-        """Получает/создаёт патч, возвращает его id."""
+        """Получает/создаёт патч, возвращает его id.
+
+        commit=False позволяет вызывающему собрать всю синхронизацию в одну
+        транзакцию и зафиксировать её атомарно.
+        """
         stmt = sqlite_insert(PatchORM).values(
             version=version, release_date=release_date, note=note,
         )
+        updates: dict[str, object] = {"note": stmt.excluded.note}
+        if release_date is not None:
+            # Исправляем дату у патча, созданного старой версией (там
+            # release_date ошибочно равнялся времени синхронизации).
+            updates["release_date"] = stmt.excluded.release_date
         stmt = stmt.on_conflict_do_update(
-            index_elements=["version"], set_={"note": stmt.excluded.note})
+            index_elements=["version"], set_=updates)
         session.execute(stmt)
-        session.commit()
+        if commit:
+            session.commit()
         row = session.query(PatchORM).filter(PatchORM.version == version).one()
         return row.id
 
@@ -67,13 +78,14 @@ class MetaRepository:
     def upsert(
         self, patch_id: int, hero_id: int,
         win_rate: float, pick_rate: float, rank_tier: int | None = None,
-        ban_rate: float = 0.0,
+        ban_rate: float = 0.0, commit: bool = True,
     ) -> None:
         """Дедуп по (patch, hero, rank_tier); дельты считаются ДО перезаписи.
 
         delta_* = новое значение - текущее той же строки; None, если это
         первая запись для ключа. Полностью обратно совместимо: вызовы вида
         upsert(patch, hero, win, pick) работают (rank_tier=None, ban 0).
+        commit=False нужен для атомарной синхронизации каталога.
         """
         existing = self._get_snapshot(patch_id, hero_id, rank_tier)
         if existing is None:
@@ -83,7 +95,8 @@ class MetaRepository:
                 delta_win=None, delta_pick=None, delta_ban=None,
                 rank_tier=rank_tier,
             ))
-            self._session.commit()
+            if commit:
+                self._session.commit()
             return
         delta_win = round(win_rate - existing.win_rate, 2)
         delta_pick = round(pick_rate - existing.pick_rate, 2)
@@ -94,7 +107,8 @@ class MetaRepository:
         existing.delta_win = delta_win
         existing.delta_pick = delta_pick
         existing.delta_ban = delta_ban
-        self._session.commit()
+        if commit:
+            self._session.commit()
 
     def get_meta(self, hero_id: int) -> tuple[float, float] | None:
         """Снэпшот героя (предпочтительно общий тир): (win_rate, pick_rate)."""
@@ -107,7 +121,10 @@ class MetaRepository:
             row = base.order_by(MetaSnapshotORM.rank_tier.desc()).first()
         return (row.win_rate, row.pick_rate) if row else None
 
-    def _to_meta_row(self, hero_orm: HeroORM, snapshot: MetaSnapshotORM) -> MetaRow:
+    def _to_meta_row(
+        self, hero_orm: HeroORM, snapshot: MetaSnapshotORM,
+        patch_version: str | None = None,
+    ) -> MetaRow:
         """(HeroORM, MetaSnapshotORM) -> MetaRow для UI."""
         return MetaRow(
             hero_id=snapshot.hero_id,
@@ -121,11 +138,18 @@ class MetaRepository:
             delta_pick=(
                 float(snapshot.delta_pick)
                 if snapshot.delta_pick is not None else None),
-            ban_rate=float(snapshot.ban_rate or 0.0),
+            # Pro-баны OpenDota не разбиты по рангам. Показывать их для
+            # rank_tier-строки значило бы приписать общий pro-срез рангу.
+            ban_rate=(
+                float(snapshot.ban_rate)
+                if snapshot.rank_tier is None and snapshot.ban_rate is not None
+                else None),
             delta_ban=(
                 float(snapshot.delta_ban)
-                if snapshot.delta_ban is not None else None),
+                if snapshot.rank_tier is None
+                and snapshot.delta_ban is not None else None),
             positions=_positions(list(hero_orm.roles or [])),
+            patch_version=patch_version,
         )
 
     def get_top_meta(
@@ -142,11 +166,20 @@ class MetaRepository:
         tier_expr = MetaSnapshotORM.rank_tier.is_(None) if rank_tier is None else (
             MetaSnapshotORM.rank_tier == rank_tier
         )
+        # Без фильтра по патчу строки разных срезов дублировали героя и
+        # смешивали старую мету с новой. Показываем только самый свежий
+        # срез, в котором есть данные для выбранного ранга.
+        latest_patch = self._session.execute(
+            select(func.max(MetaSnapshotORM.patch_id)).where(tier_expr)
+        ).scalar()
+        if latest_patch is None:
+            return []
         stmt = (
-            select(HeroORM, MetaSnapshotORM)
+            select(HeroORM, MetaSnapshotORM, PatchORM.version)
             .join(
                 MetaSnapshotORM, MetaSnapshotORM.hero_id == HeroORM.id)
-            .where(tier_expr)
+            .join(PatchORM, PatchORM.id == MetaSnapshotORM.patch_id)
+            .where(tier_expr, MetaSnapshotORM.patch_id == latest_patch)
             .order_by(
                 MetaSnapshotORM.win_rate.desc(), MetaSnapshotORM.pick_rate.desc(),
                 HeroORM.localized_name.asc())
@@ -157,11 +190,12 @@ class MetaRepository:
             stmt = stmt.limit(limit)
         rows = self._session.execute(stmt).all()
         result: list[MetaRow] = []
-        for hero_orm, snapshot in rows:
+        for hero_orm, snapshot, patch_version in rows:
             if position is not None and position not in _positions(
                     list(hero_orm.roles or [])):
                 continue
-            result.append(self._to_meta_row(hero_orm, snapshot))
+            result.append(self._to_meta_row(
+                hero_orm, snapshot, str(patch_version)))
             if len(result) >= limit:
                 break
         return result

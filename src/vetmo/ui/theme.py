@@ -13,43 +13,49 @@ __all__ = ["THEME_DARK", "THEME_LIGHT", "theme_for"]
 
 
 _DARK: dict[str, str] = {
-    "bg": "#181A20",
-    "bg_alt": "#1E2027",
-    "panel": "#22242C",
-    "panel_2": "#282B34",
-    "text": "#E8EAF0",
-    "muted": "#9AA0AC",
-    "border": "#32364A",
+    "bg": "#0F1218",
+    "bg_alt": "#141821",
+    "panel": "#171C26",
+    "panel_2": "#1E2431",
+    "panel_3": "#252D3C",
+    "text": "#EDF1F8",
+    "muted": "#8E99AD",
+    "border": "#2B3344",
     "accent": "#5B8DEF",
     "accent_hover": "#6E9CF2",
     "accent_pressed": "#4A78D8",
+    "accent_soft": "#223354",
     "on_accent": "#FFFFFF",
-    "danger": "#E05661",
-    "ok": "#3FB68B",
-    "input": "#1B1D24",
-    "scroll": "#3A3E4B",
-    "overlay_panel": "rgba(24, 26, 32, 228)",
-    "overlay_title": "#C9CFDC",
+    "danger": "#E35D6A",
+    "ok": "#43C59E",
+    "warning": "#E8B05A",
+    "input": "#11151D",
+    "scroll": "#394255",
+    "overlay_panel": "rgba(15, 18, 24, 235)",
+    "overlay_title": "#D7DDEA",
     "shadow": "rgba(0, 0, 0, 120)",
 }
 
 _LIGHT: dict[str, str] = {
-    "bg": "#F3F5F9",
-    "bg_alt": "#EAEDF3",
+    "bg": "#EEF1F6",
+    "bg_alt": "#E7EBF2",
     "panel": "#FFFFFF",
-    "panel_2": "#EEF1F6",
-    "text": "#1F2430",
-    "muted": "#657086",
-    "border": "#D5D9E2",
-    "accent": "#4A78D8",
+    "panel_2": "#F3F5F9",
+    "panel_3": "#E9EDF4",
+    "text": "#172033",
+    "muted": "#667287",
+    "border": "#D6DCE6",
+    "accent": "#3E6FE0",
     "accent_hover": "#5B8DEF",
-    "accent_pressed": "#3E68C4",
+    "accent_pressed": "#315BC0",
+    "accent_soft": "#E4EBFC",
     "on_accent": "#FFFFFF",
-    "danger": "#D64550",
-    "ok": "#2E9C77",
+    "danger": "#C93F4D",
+    "ok": "#21896B",
+    "warning": "#B87918",
     "input": "#FFFFFF",
     "scroll": "#C3C8D4",
-    "overlay_panel": "rgba(255, 255, 255, 240)",
+    "overlay_panel": "rgba(255, 255, 255, 244)",
     "overlay_title": "#3A4150",
     "shadow": "rgba(0, 0, 0, 40)",
 }
@@ -58,7 +64,7 @@ _TEMPLATE = Template(
     """
 /* ---------- база ---------- */
 QWidget {
-    background: $bg;
+    background: transparent;
     color: $text;
     font-family: 'Segoe UI', 'Arial', sans-serif;
     font-size: 13px;
@@ -70,9 +76,127 @@ QWidget:disabled {
     color: $muted;
 }
 
+/* ---------- каркас лаунчера ---------- */
+QFrame#appHeader {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 $panel, stop:0.55 $panel_2, stop:1 $panel);
+    border: 1px solid $border;
+    border-radius: 14px;
+}
+QLabel#brandMark {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 $accent_hover, stop:1 $accent_pressed);
+    border: 1px solid $accent;
+    border-radius: 11px;
+    color: $on_accent;
+    font-size: 18px;
+    font-weight: 800;
+}
+QLabel#brandTitle {
+    color: $text;
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    background: transparent;
+}
+QLabel#brandSubtitle {
+    color: $muted;
+    font-size: 11px;
+    background: transparent;
+}
+QLabel#headerPill {
+    background: $panel_3;
+    border: 1px solid $border;
+    border-radius: 9px;
+    color: $muted;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 3px 9px;
+}
+QTabWidget#sidebarTabs::pane {
+    background: $panel;
+    border: 1px solid $border;
+    border-radius: 12px;
+    top: -1px;
+}
+QTabBar::tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: $muted;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    padding: 7px 14px;
+    margin-right: 2px;
+}
+QTabBar::tab:hover { color: $text; }
+QTabBar::tab:selected {
+    color: $text;
+    border-bottom: 2px solid $accent;
+}
+QTabWidget#sidebarTabs QFrame#panel {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+}
+
 /* ---------- слои заголовков/бейджи ---------- */
 QLabel#h1 { font-size: 19px; font-weight: 700; }
 QLabel#h2 { font-size: 14px; font-weight: 600; }
+QLabel#metaTitle { font-size: 18px; font-weight: 800; background: transparent; }
+QLabel#metaSubtitle { color: $muted; font-size: 11px; background: transparent; }
+QLabel#patchPill {
+    background: $accent_soft;
+    border: 1px solid $accent_pressed;
+    border-radius: 9px;
+    color: $accent_hover;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    padding: 4px 10px;
+}
+QFrame#statCard {
+    background: $panel_2;
+    border: 1px solid $border;
+    border-radius: 10px;
+}
+QLabel#statValue {
+    color: $text;
+    font-size: 17px;
+    font-weight: 800;
+    background: transparent;
+}
+QLabel#statLabel {
+    color: $muted;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: transparent;
+}
+QLabel#countLabel { color: $muted; font-size: 11px; background: transparent; }
+QLabel#stateInfo, QLabel#stateError {
+    border-radius: 9px;
+    font-size: 12px;
+    padding: 8px 10px;
+    background: $panel_2;
+    border: 1px solid $border;
+    color: $muted;
+}
+QLabel#stateError {
+    color: $danger;
+    border: 1px solid $danger;
+}
+QLabel#posBadge {
+    background: $panel_3;
+    border: 1px solid $border;
+    border-radius: 10px;
+    color: $text;
+    font-size: 10px;
+    font-weight: 700;
+}
+QLabel#heroAttr { color: $muted; font-size: 10px; background: transparent; }
 QLabel#sectionTitle {
     font-size: 11px;
     font-weight: 700;
@@ -97,15 +221,17 @@ QLabel#chipLabel {
 }
 QLabel#muted { color: $muted; font-size: 12px; background: transparent; }
 QLabel#mutedSmall { color: $muted; font-size: 11px; background: transparent; }
-QLabel#delta {
+QLabel#delta, QLabel#deltaPos, QLabel#deltaNeg {
     font-size: 12px;
     font-weight: 700;
     background: transparent;
 }
+QLabel#deltaPos { color: $ok; }
+QLabel#deltaNeg { color: $danger; }
 QLabel#nodata { color: $muted; font-size: 12px; background: transparent; }
 QLabel#metaHeroName {
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
     background: transparent;
 }
 QLabel#metaRate {
@@ -141,7 +267,7 @@ QLabel#badgeOffline {
 }
 
 /* ---------- панели и карточки ---------- */
-QFrame#panel {
+QFrame#panel, QFrame#metaPanel {
     background: $panel;
     border: 1px solid $border;
     border-radius: 12px;
@@ -169,7 +295,7 @@ QFrame#heroCard {
 QFrame#heroCard:hover {
     border: 1px solid $accent;
 }
-QLabel#cardName { font-size: 12px; font-weight: 600; }
+QLabel#cardName { color: $text; font-size: 12px; font-weight: 600; }
 QLabel#cardReason { color: $accent; font-size: 11px; background: transparent; }
 QLabel#cardWr { color: $ok; font-size: 11px; font-weight: 600; }
 QLabel#cardEmpty { color: $muted; font-size: 11px; font-style: italic; }
@@ -228,10 +354,10 @@ QPushButton#bigOverlay {
         stop:0 $accent_hover, stop:1 $accent);
     border: 1px solid $accent;
     color: $on_accent;
-    border-radius: 12px;
-    font-size: 15px;
+    border-radius: 10px;
+    font-size: 13px;
     font-weight: 700;
-    padding: 12px 24px;
+    padding: 9px 18px;
 }
 QPushButton#bigOverlay:hover {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -252,6 +378,19 @@ QPushButton#secondary:hover {
     border: 1px solid $accent;
     color: $text;
     background: $panel_2;
+}
+QPushButton#headerGhost {
+    background: transparent;
+    border: 1px solid $border;
+    color: $muted;
+    border-radius: 9px;
+    padding: 7px 12px;
+    font-size: 12px;
+}
+QPushButton#headerGhost:hover {
+    background: $panel_3;
+    border: 1px solid $accent;
+    color: $text;
 }
 
 /* ---------- чипсы-фильтры (мета-тулбар) ---------- */
@@ -283,20 +422,23 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     selection-background-color: $accent;
     selection-color: $on_accent;
 }
+QLineEdit#search {
+    min-height: 22px;
+    padding: 6px 11px;
+    font-size: 12px;
+}
+QComboBox#filterCombo {
+    min-height: 22px;
+    padding: 5px 9px;
+    font-size: 12px;
+}
+QPushButton#tiny {
+    padding: 5px 10px;
+    font-size: 11px;
+    color: $muted;
+}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
     border: 1px solid $accent;
-}
-QComboBox::drop-down {
-    border: none;
-    width: 20px;
-}
-QComboBox::down-arrow {
-    width: 0px;
-    height: 0px;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid $muted;
-    margin-right: 6px;
 }
 QComboBox QAbstractItemView {
     background: $panel_2;
@@ -305,24 +447,6 @@ QComboBox QAbstractItemView {
     selection-color: $on_accent;
     outline: none;
 }
-QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button,
-QDoubleSpinBox::down-button {
-    background: $panel_2;
-    border: 1px solid $border;
-    border-radius: 3px;
-    width: 14px;
-}
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 5px solid $muted;
-}
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid $muted;
-}
-
 /* ---------- чекбоксы ---------- */
 QCheckBox { spacing: 8px; background: transparent; }
 QCheckBox::indicator {
@@ -370,15 +494,29 @@ QTableWidget {
     selection-background-color: $accent;
     selection-color: $on_accent;
 }
+QTableWidget#metaTable {
+    background: transparent;
+    alternate-background-color: $bg_alt;
+    border: none;
+}
+QTableWidget#metaTable::item {
+    border-bottom: 1px solid $border;
+    padding: 0;
+}
 QTableCornerButton::section { background: $panel; border: none; }
+QHeaderView {
+    background: transparent;
+    border: none;
+}
 QHeaderView::section {
     background: $panel;
     color: $muted;
     border: none;
     border-bottom: 1px solid $border;
-    padding: 5px 8px;
-    font-size: 11px;
+    padding: 7px 8px;
+    font-size: 10px;
     font-weight: 700;
+    letter-spacing: 0.3px;
 }
 QListWidget {
     background: $panel;
@@ -474,29 +612,104 @@ QWidget#overlayRoot { background: transparent; }
 QFrame#overlayPanel {
     background: $overlay_panel;
     border: 1px solid $border;
-    border-radius: 12px;
+    border-radius: 16px;
 }
-QLabel#overlayTitle {
+QFrame#overlayHeader {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid $border;
+}
+QLabel#overlayBrand {
     color: $overlay_title;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 800;
+    letter-spacing: 1px;
 }
 QLabel#overlayStep {
-    color: $accent;
-    font-size: 12px;
-    font-weight: 600;
+    color: $accent_hover;
+    font-size: 11px;
+    font-weight: 700;
+}
+QLabel#overlaySource {
+    color: $muted;
+    font-size: 9px;
+    letter-spacing: 0.4px;
+}
+QPushButton#overlayGear {
+    background: $panel_2;
+    border: 1px solid $border;
+    border-radius: 13px;
+    color: $text;
+    font-size: 14px;
+    padding: 0;
+}
+QPushButton#overlayGear:hover {
+    background: $accent_soft;
+    border: 1px solid $accent;
+}
+QPushButton#overlayGear:disabled {
+    color: $muted;
+    border: 1px solid $border;
+    background: transparent;
+}
+QProgressBar#overlayProgress {
+    background: $panel_3;
+    border: none;
+    border-radius: 2px;
+    max-height: 4px;
+    min-height: 4px;
+}
+QProgressBar#overlayProgress::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 $accent, stop:1 $accent_hover);
+    border-radius: 2px;
+}
+QFrame#overlayTeamRadiant, QFrame#overlayTeamDire {
+    background: $panel_2;
+    border: 1px solid $border;
+    border-radius: 11px;
+}
+QFrame#overlayTeamRadiant { border-left: 2px solid $ok; }
+QFrame#overlayTeamDire { border-left: 2px solid $danger; }
+QLabel#overlayTeamTitle {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    background: transparent;
+}
+QLabel#overlayTeamTitle[team="radiant"] { color: $ok; }
+QLabel#overlayTeamTitle[team="dire"] { color: $danger; }
+QLabel#overlayPosBadge {
+    background: $panel_3;
+    border: 1px solid $border;
+    border-radius: 9px;
+    color: $muted;
+    font-size: 9px;
+    font-weight: 800;
 }
 QFrame#overlayCard {
-    background: $overlay_panel;
+    background: $panel_2;
     border: 1px solid $border;
     border-radius: 8px;
 }
 QFrame#overlayCard:hover { border: 1px solid $accent; }
-QLabel#overlayCardName { color: $text; font-size: 11px; font-weight: 600; }
-QLabel#overlayCardReason { color: $accent; font-size: 10px; }
-QLabel#overlayCardWr { color: $ok; font-size: 10px; font-weight: 600; }
-QLabel#overlayCardEmpty { color: $muted; font-size: 10px; font-style: italic; }
+QFrame#overlayCard QLabel#cardName {
+    color: $text;
+    font-size: 11px;
+    font-weight: 700;
+}
+QFrame#overlayCard QLabel#cardReason {
+    color: $accent_hover;
+    font-size: 9px;
+    background: transparent;
+}
+QFrame#overlayCard QLabel#cardWr {
+    color: $ok;
+    font-size: 10px;
+    font-weight: 700;
+}
 QLabel#overlayPosLabel { color: $muted; font-size: 10px; font-weight: 600; }
+QLabel#overlayHint { color: $muted; font-size: 9px; background: transparent; }
 """.lstrip()
 )
 

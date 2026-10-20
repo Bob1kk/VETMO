@@ -9,7 +9,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
 
 _ICON_SIZE = 34
 
@@ -74,13 +74,38 @@ def placeholder_pixmap(name: str, size: int = _ICON_SIZE) -> QPixmap:
     return pixmap
 
 
-def scale_icon(pixmap: QPixmap, size: int = _ICON_SIZE) -> QPixmap:
-    """Масштабирует иконку в квадрат size x size (smooth)."""
-    return pixmap.scaled(
+def scale_icon(
+    pixmap: QPixmap, size: int = _ICON_SIZE, radius: int | None = None,
+) -> QPixmap:
+    """Центральный квадратный кроп + smooth-масштаб + скругление.
+
+    Иконки Dota 2 — широкие (16:9). KeepAspectRatio в квадратном QLabel
+    оставлял прозрачные поля сверху/снизу; здесь кадрируем по центру и
+    рисуем в скруглённый квадрат.
+    """
+    if pixmap.isNull():
+        return QPixmap()
+    width, height = pixmap.width(), pixmap.height()
+    side = min(width, height)
+    left = max(0, (width - side) // 2)
+    top = max(0, (height - side) // 2)
+    cropped = pixmap.copy(left, top, side, side)
+    scaled = cropped.scaled(
         size, size,
-        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
+    result = QPixmap(size, size)
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    corner = max(0, size // 5 if radius is None else radius)
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, size, size, corner, corner)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, scaled)
+    painter.end()
+    return result
 
 
 def resolve_icon(

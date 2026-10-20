@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,9 +25,12 @@ logger = logging.getLogger("vetmo.opendota")
 
 _KEY_LAST_SYNC_HEROES = "last_sync_heroes"
 _KEY_MATCHUPS_SYNCED = "matchups_synced_hero_ids"
-PATCH_PUBLIC_LADDER = "public-ladder"
+_KEY_MATCHUPS_SYNCED_AT = "matchups_synced_at"
+PATCH_PUBLIC_LADDER = "public-ladder"  # fallback, если /constants/patch недоступен
+_PATCH_NAME_RE = re.compile(r"^\d+\.\d+[a-z]?$")
 RANK_TIERS: tuple[int, ...] = tuple(range(1, 9))  # 1=Herald..8=Immortal
 ICON_TIMEOUT = 10.0
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 @dataclass
@@ -41,6 +45,28 @@ class SyncResult:
     def __str__(self) -> str:  # noqa: D105
         return (f"SyncResult(total={self.total}, ok={self.ok}, "
                 f"quarantined={self.quarantined}, skipped={self.skipped})")
+
+
+def _is_valid_png(path: Path) -> bool:
+    """Проверяет сигнатуру PNG: 0-байтный/битый кэш не считается валидным."""
+    try:
+        with path.open("rb") as handle:
+            return handle.read(len(_PNG_SIGNATURE)) == _PNG_SIGNATURE
+    except OSError:
+        return False
+
+
+def _progress_is_fresh(raw_at: str | None, ttl_hours: float) -> bool:
+    """True, если незавершённый прогресс синхронизации ещё актуален."""
+    if not raw_at:
+        return False
+    try:
+        started = datetime.fromisoformat(raw_at)
+    except ValueError:
+        return False
+    now = datetime.now(UTC) if started.tzinfo else datetime.now()
+    elapsed = (now - started).total_seconds() / 3600.0
+    return 0.0 <= elapsed < max(0.0, float(ttl_hours))
 
 
 class OpenDotaClient:
@@ -103,6 +129,56 @@ class OpenDotaClient:
                 return None
         return None
 
+    def latest_patch(self) -> tuple[str, datetime | None]:
+        """Последний патч Dota: (версия, дата релиза | None).
+
+        Берём максимальный ``id`` из ``/constants/patch``; дата приходит
+        ISO-строкой (``2026-03-24T00:50:59.580Z``) и сохраняется в БД как
+        naive UTC. heroStats — скользящий срез публичных матчей, поэтому
+        патч остаётся меткой источника, а не гарантией «только этот патч».
+        Если справочник недоступен/ответ не похож на патчи — безопасный
+        fallback ``public-ladder`` без даты.
+        """
+        data = self._request("constants/patch")
+        candidates: list[tuple[int, str, datetime | None]] = []
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                raw_id = item.get("id")
+                if raw_id is None:
+                    continue
+                try:
+                    patch_id = int(raw_id)
+                except (TypeError, ValueError):
+                    continue
+                if _PATCH_NAME_RE.fullmatch(name):
+                    candidates.append((
+                        patch_id, name, self._patch_date(item.get("date"))))
+        if not candidates:
+            logger.info("Справочник патчей недоступен — метка public-ladder")
+            return PATCH_PUBLIC_LADDER, None
+        _, name, released = max(candidates, key=lambda item: item[0])
+        return name, released
+
+    def latest_patch_version(self) -> str:
+        """Только версия последнего патча (совместимый helper)."""
+        return self.latest_patch()[0]
+
+    @staticmethod
+    def _patch_date(raw: object) -> datetime | None:
+        """ISO-дата OpenDota -> naive UTC; битую строку игнорируем."""
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+        return parsed
+
     # --- кэш ---
     def _cache_is_fresh(self, settings_repo: SettingsRepository) -> bool:
         """True, если last_sync_heroes моложе cache_ttl_hours."""
@@ -129,7 +205,9 @@ class OpenDotaClient:
         pick — относительная доля pub_pick *1000 (кап 100); (2) для каждого
         тира t=1..8 с {t}_pick>0 — row rank_tier=t, win={t}_win/{t}_pick*100,
         pick — доля в тире (1000*{t}_pick/Σ{t}_pick, кап 100). ban_rate —
-        доля про-банов pro_ban/(pro_pick+pro_ban)*100 (кап 100), одна на героя.
+        доля про-банов pro_ban/(pro_pick+pro_ban)*100 (кап 100); пишется
+        только в общий срез rank_tier=None, потому что OpenDota не отдаёт
+        pro-баны в разбивке по рангам.
         """
         with self._sessionmaker() as session:
             settings_repo = SettingsRepository(session)
@@ -140,6 +218,7 @@ class OpenDotaClient:
         if not isinstance(data, list):
             logger.warning("heroStats недоступен — offline, БД не тронута")
             return SyncResult(skipped=max(1, limit))
+        patch_version, patch_date = self.latest_patch()
         data = data[:limit] if limit and limit > 0 else data
         records = [r for r in data if isinstance(r, dict)]
 
@@ -160,9 +239,10 @@ class OpenDotaClient:
             patch: int | None = None
             if total_pub_pick > 0:
                 patch = MetaRepository.ensure_patch(
-                    session, PATCH_PUBLIC_LADDER,
-                    datetime.now(UTC).replace(tzinfo=None),
-                    "Бета-мета: pub_pick/pub_win из OpenDota heroStats",
+                    session, patch_version, patch_date,
+                    "OpenDota heroStats: rolling public matches; "
+                    "pro-баны — общий pro-срез, не по рангам",
+                    commit=False,
                 )
             for record in records:
                 hero = self._map_hero(record)
@@ -179,14 +259,19 @@ class OpenDotaClient:
                                 hero.id, validation.reason)
                     quarantined += 1
                     continue
-                hero_repo.upsert(hero)
+                hero_repo.upsert(hero, commit=False)
                 if patch is not None:
                     bad = self._write_meta_rows(
                         record, hero.id, patch, meta_repo, totals)
                     quarantined += bad
                 ok += 1
             settings_repo.set(
-                _KEY_LAST_SYNC_HEROES, datetime.now(UTC).isoformat())
+                _KEY_LAST_SYNC_HEROES, datetime.now(UTC).isoformat(),
+                commit=False,
+            )
+            # Один commit на весь срез: обрыв/исключение не оставит БД
+            # наполовину обновлённой.
+            session.commit()
         return SyncResult(total=len(data), ok=ok, quarantined=quarantined)
 
     def _write_meta_rows(
@@ -233,7 +318,12 @@ class OpenDotaClient:
                 continue
             meta_repo.upsert(
                 patch_id, hero_id, win_rate, pick_rate,
-                rank_tier=rank_tier, ban_rate=ban_rate)
+                rank_tier=rank_tier,
+                # Pro-баны не имеют разбивки по рангам: не переносим их
+                # на rank_tier-строки, иначе выдаём общий pro-срез за ранг.
+                ban_rate=ban_rate if rank_tier is None else 0.0,
+                commit=False,
+            )
         return quarantined
 
     def _map_hero(self, record: dict) -> Hero | None:
@@ -312,16 +402,21 @@ class OpenDotaClient:
             hero_ids = [h.id for h in HeroRepository(session).get_all()]
             settings_repo = SettingsRepository(session)
             raw = settings_repo.get(_KEY_MATCHUPS_SYNCED)
+            raw_at = settings_repo.get(_KEY_MATCHUPS_SYNCED_AT)
         if not hero_ids:
             return {"total": 0, "synced": 0, "skipped": 0, "last_hero_id": None}
         done: set[int] = set()
-        if resume and raw:
+        if resume and raw and _progress_is_fresh(
+            raw_at, self._settings.cache_ttl_hours,
+        ):
             try:
                 done = {int(x) for x in json.loads(raw)}
             except (TypeError, ValueError):
                 logger.warning("Плохой ключ %s — начинаем заново",
                                _KEY_MATCHUPS_SYNCED)
                 done = set()
+        elif raw:
+            logger.info("Прогресс matchups устарел — обновляем всех героев")
         todo = [i for i in hero_ids if i not in done]
         rows = synced = skipped = 0
         last: int | None = None
@@ -338,8 +433,10 @@ class OpenDotaClient:
             last = hero_id
             done.add(hero_id)
             with self._sessionmaker() as session:
-                SettingsRepository(session).set(
-                    _KEY_MATCHUPS_SYNCED, json.dumps(sorted(done)))
+                repo = SettingsRepository(session)
+                repo.set(_KEY_MATCHUPS_SYNCED, json.dumps(sorted(done)))
+                repo.set(
+                    _KEY_MATCHUPS_SYNCED_AT, datetime.now(UTC).isoformat())
         return {"total": rows, "synced": synced, "skipped": skipped,
                 "last_hero_id": last}
 
@@ -394,11 +491,12 @@ class OpenDotaClient:
         self, icons_dir: Path | str = Path("assets/cache/icons"),
         http_client: httpx.Client | None = None,
     ) -> dict[str, int]:
-        """Скачивает icon_url героев в {icons_dir}/{hero_id}.png (если нет файла).
+        """Скачивает icon_url героев в {icons_dir}/{hero_id}.png.
 
-        path КЭШ: существующий непустой файл НЕ перекачивается. Сбои сети не
-        крашат (лог + failed). Возвращает {"downloaded": n, "cached": m,
-        "failed": k}.
+        Кэш: существующий файл переиспользуется только если это настоящий
+        PNG (сигнатура + размер). Битая/пустая картинка перекачивается.
+        Сбои сети не крашат (лог + failed). Возвращает
+        {"downloaded": n, "cached": m, "failed": k}.
         """
         icons = Path(icons_dir)
         with self._sessionmaker() as session:
@@ -414,7 +512,7 @@ class OpenDotaClient:
                 http = build_http_client(ICON_TIMEOUT)
             for hero in heroes:
                 target = icons / f"{hero.id}.png"
-                if target.exists() and target.stat().st_size > 0:
+                if _is_valid_png(target):
                     result["cached"] += 1
                     continue
                 if not hero.icon_url:
@@ -428,7 +526,17 @@ class OpenDotaClient:
                             "Иконка %s: HTTP %s", hero.id, response.status_code)
                         result["failed"] += 1
                         continue
-                    target.write_bytes(response.content)
+                    content = response.content
+                    if not content.startswith(_PNG_SIGNATURE):
+                        logger.warning(
+                            "Иконка %s: ответ не PNG (%s байт)",
+                            hero.id, len(content))
+                        result["failed"] += 1
+                        continue
+                    # Атомарная замена: UI не увидит недописанный файл.
+                    temporary = target.with_name(f".{hero.id}.png.tmp")
+                    temporary.write_bytes(content)
+                    temporary.replace(target)
                     result["downloaded"] += 1
                 except Exception as error:  # noqa: BLE001 — иконки не критичны
                     logger.warning("Иконка %s: сеть упала: %s", hero.id, error)

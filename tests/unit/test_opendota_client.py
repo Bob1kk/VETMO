@@ -1,11 +1,13 @@
 """Тесты OpenDotaClient (T-008): rate limit, дедуп, ошибка сети не роняет."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
+from vetmo.data.models_orm import PatchORM
 from vetmo.data.repositories.counter_repo import CounterRepository
 from vetmo.data.repositories.hero_repo import HeroRepository
+from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.infra.config import Settings
 from vetmo.services.opendota_client import OpenDotaClient, SyncResult
@@ -64,6 +66,32 @@ def test_sync_heroes_parses_and_saves(db) -> None:
     assert axe.localized_name == "Axe"
 
 
+def test_sync_uses_real_patch_and_release_date(db) -> None:
+    """Версия и дата патча берутся из /constants/patch, а не now()."""
+    patches = [
+        {"id": 59, "name": "7.40", "date": "2025-12-16T00:50:40.281Z"},
+        {"id": 60, "name": "7.41", "date": "2026-03-24T00:50:59.580Z"},
+    ]
+    stats = [
+        {**record, "pub_pick": 100, "pub_win": 55}
+        for record in HERO_STATS
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("constants/patch"):
+            return httpx.Response(200, json=patches)
+        return httpx.Response(200, json=stats)
+
+    client = _mk_client(db, handler)
+    assert client.sync_heroes().ok == 2
+    _, sessionmaker = db
+    with sessionmaker() as session:
+        rows = MetaRepository(session).get_top_meta(limit=10)
+        patch = session.query(PatchORM).filter_by(version="7.41").one()
+    assert rows and rows[0].patch_version == "7.41"
+    assert patch.release_date == date(2026, 3, 24)
+
+
 def test_sync_heroes_default_syncs_all_heroes(db) -> None:
     """По умолчанию синхронизируются ВСЕ герои, а не первые 120.
 
@@ -88,16 +116,17 @@ def test_sync_heroes_default_syncs_all_heroes(db) -> None:
 
 def test_sync_heroes_dedup_on_resync(db) -> None:
     """Повторный sync не создаёт дублей (Review Focus #3), кэш не даёт сеть."""
-    calls = []
+    calls: list[str] = []
 
     def ok(request: httpx.Request) -> httpx.Response:
-        calls.append(1)
+        calls.append(request.url.path)
         return httpx.Response(200, json=HERO_STATS)
 
     client = _mk_client(db, ok)
     assert client.sync_heroes().ok == 2
-    second = client.sync_heroes()  # свежий кэш: сеть не трогается
-    assert len(calls) == 1
+    second = client.sync_heroes()  # свежий кэш: heroStats не трогается
+    assert [path for path in calls if path.endswith("heroStats")] == [
+        "/api/heroStats"]
     assert isinstance(second, SyncResult) and second.ok == 2
     _, sessionmaker = db
     with sessionmaker() as session:
@@ -147,26 +176,27 @@ def test_server_error_retries_3_times(db) -> None:
 
 
 def test_cache_prevents_network_within_ttl(db) -> None:
-    """Свежий last_sync_heroes -> сеть не вызывается."""
-    calls = []
+    """Свежий last_sync_heroes -> heroStats повторно не запрашивается."""
+    calls: list[str] = []
 
     def ok(request: httpx.Request) -> httpx.Response:
-        calls.append(1)
+        calls.append(request.url.path)
         return httpx.Response(200, json=HERO_STATS)
 
     client = _mk_client(db, ok)
     client.sync_heroes()
     second = client.sync_heroes()
-    assert len(calls) == 1
+    assert [path for path in calls if path.endswith("heroStats")] == [
+        "/api/heroStats"]
     assert second.ok == 2
 
 
 def test_stale_cache_allows_network(db) -> None:
-    """Кэш старше cache_ttl_hours -> сеть вызывается заново."""
-    calls = []
+    """Кэш старше cache_ttl_hours -> heroStats запрашивается заново."""
+    calls: list[str] = []
 
     def ok(request: httpx.Request) -> httpx.Response:
-        calls.append(1)
+        calls.append(request.url.path)
         return httpx.Response(200, json=HERO_STATS)
 
     client = _mk_client(db, ok)
@@ -176,7 +206,7 @@ def test_stale_cache_allows_network(db) -> None:
     with sessionmaker() as session:
         SettingsRepository(session).set("last_sync_heroes", stale)
     assert client.sync_heroes().ok == 2
-    assert len(calls) == 2
+    assert len([path for path in calls if path.endswith("heroStats")]) == 2
 
 
 def test_rate_limit_between_consecutive_requests(db) -> None:

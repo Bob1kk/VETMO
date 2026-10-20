@@ -14,11 +14,15 @@ def svc(db) -> SettingsService:
 
 
 def test_overlay_defaults(svc: SettingsService) -> None:
-    """Дефолты: (20,20), opacity 0.85, dark, click-through True, Dire True."""
+    """Дефолты: (20,20), opacity 0.85, dark, click-through False, Dire True.
+
+    Click-through выключен, чтобы шестерёнка оверлея принимала мышь; это
+    явная опция для клавиатурного управления.
+    """
     assert svc.get_overlay_position() == (20, 20)
     assert svc.get_opacity() == 0.85
     assert svc.get_theme() == "dark"
-    assert svc.get_click_through() is True
+    assert svc.get_click_through() is False
     assert svc.get_show_dire() is True
 
 
@@ -50,10 +54,12 @@ def test_theme_persist_and_validate(svc: SettingsService) -> None:
 
 def test_flags_persist(svc: SettingsService) -> None:
     """Click-through и show_dire переключаются."""
-    svc.set_click_through(False)
+    svc.set_click_through(True)
     svc.set_show_dire(False)
-    assert svc.get_click_through() is False
+    assert svc.get_click_through() is True
     assert svc.get_show_dire() is False
+    svc.set_click_through(False)
+    assert svc.get_click_through() is False
 
 
 def test_position_priorities_roundtrip(svc: SettingsService) -> None:

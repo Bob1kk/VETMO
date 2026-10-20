@@ -10,11 +10,12 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
-    QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -39,7 +40,7 @@ _MATCHUP_HEROES = 10
 
 
 _NEWS_REFRESH_MS = 15 * 60 * 1000  # новости по таймеру (R2, задача C)
-_META_ROWS_LIMIT = 40  # строк мета-отчёта (окно 1100x700 ≈ 15 видимых)
+_META_ROWS_LIMIT = 200  # весь каталог Dota 2 (127 героев) + запас
 
 
 def _status_label(text: str) -> QLabel:
@@ -73,8 +74,12 @@ class MainWindow(QMainWindow):
         self._settings_panel = SettingsPanel(
             initial=self._read_settings(), app_version=__version__,
         )
+        self._settings_panel.set_supabase_note(
+            bool(context.settings.supabase_url and context.settings.supabase_key)
+        )
         context.overlay_service.bind_window(lambda: self._overlay)
         self._overlay.refresh_requested.connect(self._refresh_overlay)
+        self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._overlay.set_matchup_loader(self._matchup_loader)
         self._meta_widget.set_matchup_loader(self._matchup_loader)
         self._vm.news_updated.subscribe(self._news_widget.on_news_updated)
@@ -100,44 +105,77 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- UI --
     def _build_ui(self) -> None:
         self.setWindowTitle("VETMO — помощник драфта Dota 2")
-        self.resize(1100, 700)
+        self.setMinimumSize(1180, 700)
+        self.resize(1280, 800)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._news_widget)
-        splitter.addWidget(self._meta_widget)
-        splitter.addWidget(self._settings_panel)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
-        splitter.setStretchFactor(2, 1)
         self._settings_panel.settings_committed.connect(self._commit_setting)
         self._settings_panel.priorities_requested.connect(
             self._open_priorities)
         self._settings_panel.sync_requested.connect(self._start_sync)
+        self._settings_panel.overlay_toggle_requested.connect(
+            self._toggle_overlay_clicked)
 
-        new_session = QPushButton("Новая сессия драфта", self)
-        new_session.setObjectName("secondary")
+        new_session = QPushButton("Новая сессия", self)
+        new_session.setObjectName("headerGhost")
+        new_session.setToolTip("Начать драфт с шага 0/10")
         new_session.clicked.connect(self._start_draft_session)
-        manual = QPushButton("Ручной ввод пика…", self)
-        manual.setObjectName("secondary")
+        manual = QPushButton("Ручной пик…", self)
+        manual.setObjectName("headerGhost")
+        manual.setToolTip("Записать пик вручную")
         manual.clicked.connect(self._open_manual_pick)
         self._toggle_overlay.clicked.connect(self._toggle_overlay_clicked)
 
-        buttons = QHBoxLayout()
-        buttons.addWidget(new_session)
-        buttons.addWidget(manual)
-        buttons.addStretch(1)
-        buttons.addWidget(self._toggle_overlay)
+        header = QFrame(self)
+        header.setObjectName("appHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(10)
+        mark = QLabel("V", header)
+        mark.setObjectName("brandMark")
+        mark.setFixedSize(40, 40)
+        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_box = QVBoxLayout()
+        title_box.setSpacing(0)
+        brand = QLabel("VETMO", header)
+        brand.setObjectName("brandTitle")
+        subtitle = QLabel("DOTA 2 DRAFT INTELLIGENCE", header)
+        subtitle.setObjectName("brandSubtitle")
+        title_box.addWidget(brand)
+        title_box.addWidget(subtitle)
+        header_layout.addWidget(mark)
+        header_layout.addLayout(title_box)
+        header_layout.addStretch(1)
+        source_pill = QLabel("OPENDOTA · PUBLIC LADDER", header)
+        source_pill.setObjectName("headerPill")
+        header_layout.addWidget(source_pill)
+        header_layout.addWidget(new_session)
+        header_layout.addWidget(manual)
+        header_layout.addWidget(self._toggle_overlay)
+
+        self._sidebar_tabs = QTabWidget(self)
+        self._sidebar_tabs.setObjectName("sidebarTabs")
+        self._sidebar_tabs.setMinimumWidth(320)
+        self._sidebar_tabs.setMaximumWidth(368)
+        self._sidebar_tabs.addTab(self._news_widget, "НОВОСТИ")
+        self._sidebar_tabs.addTab(self._settings_panel, "НАСТРОЙКИ")
+        self._sidebar_tabs.setCurrentIndex(0)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(10)
+        body.addWidget(self._sidebar_tabs)
+        body.addWidget(self._meta_widget, 1)
 
         central = QWidget(self)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-        layout.addWidget(splitter, 1)
-        layout.addLayout(buttons)
+        layout.setContentsMargins(14, 12, 14, 10)
+        layout.setSpacing(10)
+        layout.addWidget(header)
+        layout.addLayout(body, 1)
         self.setCentralWidget(central)
 
         version_label = _status_label(f"vetmo {__version__}")
-        self.statusBar().addPermanentWidget(self._status_label)
+        self.statusBar().addWidget(self._status_label, 1)
         self.statusBar().addPermanentWidget(version_label)
 
     def _build_shortcuts(self) -> None:
@@ -151,6 +189,9 @@ class MainWindow(QMainWindow):
         settings_short = QShortcut(QKeySequence("F1"), self)
         settings_short.setContext(Qt.ShortcutContext.WindowShortcut)
         settings_short.activated.connect(self._open_priorities)
+        overlay_settings = QShortcut(QKeySequence("Ctrl+,"), self)
+        overlay_settings.setContext(Qt.ShortcutContext.WindowShortcut)
+        overlay_settings.activated.connect(self._open_overlay_settings)
 
     # ----------------------------------------------------------- startup --
     def _read_settings(self) -> dict:
@@ -166,7 +207,7 @@ class MainWindow(QMainWindow):
 
     def _startup(self) -> None:
         """Первичная загрузка: данные в worker; пустой каталог -> авто-синк."""
-        self.status("⏳ Загружаем данные…")
+        self.status("Загружаем данные…")
         self._load_news()
         self._load_meta()
         self._news_timer.start()
@@ -262,7 +303,7 @@ class MainWindow(QMainWindow):
     def _start_sync(self, limit: int = 0, auto: bool = False) -> None:
         """Кнопка «Синхронизировать данные» (или первый запуск)."""
         self._settings_panel.set_sync_enabled(False)
-        self.status("⏳ Синхронизация данных OpenDota — зависит от сети…")
+        self.status("Синхронизация данных OpenDota — зависит от сети…")
         start_worker(
             self._sync_job, limit,
             on_done=lambda result: self._sync_done(result),
@@ -300,11 +341,29 @@ class MainWindow(QMainWindow):
             self._ctx.overlay_service.hide()
         self._toggle_overlay.setText(
             "Скрыть оверлей" if visible else "Запустить оверлей")
+        self._settings_panel.set_overlay_visible(visible)
 
     def _hide_overlay(self) -> None:
         """Esc: скрыть оверлей; кнопка возвращается к «Запустить оверлей»."""
         if self._overlay_visible:
             self._apply_overlay_visibility(False)
+
+    def _open_overlay_settings(self) -> None:
+        """Gear из оверлея / Ctrl+, — открыть вкладку настроек лаунчера.
+
+        Оверлей поверх всех перекрыл бы панель настроек на экране, поэтому
+        на время конфигурации он скрывается; вернуть — кнопкой «Показать
+        оверлей» (в шапке или настройках).
+        """
+        if self._overlay_visible:
+            self._apply_overlay_visibility(False)
+        self._sidebar_tabs.setCurrentWidget(self._settings_panel)
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.status("Настройки оверлея — изменения сохраняются сразу")
 
     def _refresh_overlay(self) -> None:
         """Пересчёт рекомендаций: worker -> OverlayViewModel -> окно."""

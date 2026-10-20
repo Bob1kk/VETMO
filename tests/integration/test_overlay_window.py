@@ -177,3 +177,30 @@ def test_update_overlay_with_draft_service_does_not_crash(
     window.update_overlay()
     qtbot.waitSignal(window.refresh_requested, timeout=5000)
     assert pings == [1]
+
+
+def test_gear_opens_settings_when_mouse_is_enabled(
+    overlay_window, qtbot,
+) -> None:
+    """Без click-through шестерёнка активна и просит лаунчер открыть настройки."""
+    window, settings_service, _, _ = overlay_window
+    settings_service.set_click_through(False)
+    window.apply_settings()
+    assert window._gear.isEnabled()
+    assert window._lock_hint.isHidden()
+
+    with qtbot.waitSignal(window.settings_requested, timeout=3000):
+        window._gear.click()
+
+
+def test_gear_is_explicitly_locked_with_click_through(
+    overlay_window,
+) -> None:
+    """Click-through: кнопка disabled, рядом видимая подсказка, не «мёртвая»."""
+    window, settings_service, _, _ = overlay_window
+    settings_service.set_click_through(True)
+    window.apply_settings()
+
+    assert not window._gear.isEnabled()
+    assert not window._lock_hint.isHidden()
+    assert "click-through" in window._gear.toolTip()

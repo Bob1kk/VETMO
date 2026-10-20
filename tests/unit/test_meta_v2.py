@@ -141,7 +141,9 @@ def test_upsert_tier_rows_and_defaults(
         tier8 = repo.get_top_meta(limit=100, rank_tier=8)
     assert len(pub) == 1 and pub[0].hero_id == 1
     assert len(tier3) == 1 and tier3[0].win_rate == 49.0
-    assert tier3[0].ban_rate == 44.0
+    # Pro-баны не разбиваются по рангам: в tier-строке всегда None даже
+    # если старый код записал значение.
+    assert tier3[0].ban_rate is None and tier3[0].delta_ban is None
     assert len(tier8) == 1 and tier8[0].win_rate == 48.0
     # 3 строки: None, 3, 8; ban_rate по умолчанию 0
     with sessionmaker() as session:
@@ -149,6 +151,7 @@ def test_upsert_tier_rows_and_defaults(
         assert repo.count() == 3
         assert repo.latest_patch_id() == patch
         assert pub[0].ban_rate == 0.0
+        assert pub[0].patch_version == "7.54"
 
 
 def test_delta_calculation_flow(

@@ -84,7 +84,7 @@ class NewsWidget(QFrame):
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 2)
-        title = QLabel("📰 НОВОСТИ ПАТЧЕЙ", self)
+        title = QLabel("НОВОСТИ ПАТЧЕЙ", self)
         title.setObjectName("sectionTitle")
         header_row.addWidget(title)
         header_row.addStretch(1)

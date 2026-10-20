@@ -21,10 +21,11 @@ class SettingsRepository:
             )
         return row.value if row else None
 
-    def set(self, key: str, value: str) -> None:
+    def set(self, key: str, value: str, commit: bool = True) -> None:
         """Записывает значение; повторный set перезаписывает (ON CONFLICT)."""
         stmt = sqlite_insert(UserSettingORM).values(key=key, value=value)
         stmt = stmt.on_conflict_do_update(
             index_elements=["key"], set_={"value": stmt.excluded.value})
         self._session.execute(stmt)
-        self._session.commit()
+        if commit:
+            self._session.commit()

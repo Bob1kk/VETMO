@@ -6,6 +6,7 @@
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -18,8 +19,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-_ACCENT = "#5B8DEF"
 
 
 class SettingsPanel(QFrame):
@@ -42,29 +41,39 @@ class SettingsPanel(QFrame):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("panel")
-        self.setMinimumWidth(280)
+        self.setMinimumWidth(300)
         self._commit_callbacks: dict[str, object] = {}
         self._build_ui(app_version)
         self.load(initial)
 
     # --- построение ---
     def _build_ui(self, app_version: str) -> None:
-        title = QLabel("⚙ НАСТРОЙКИ ОВЕРЛЕЯ", self)
-        title.setObjectName("sectionTitle")
+        title = QLabel("Настройки", self)
+        title.setObjectName("metaTitle")
+        subtitle = QLabel("Оверлей, приоритеты и данные", self)
+        subtitle.setObjectName("metaSubtitle")
 
         # Позиция оверлея
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(6)
         self._pos_x = QSpinBox(self)
         self._pos_x.setRange(0, 4096)
+        self._pos_x.setSuffix(" px")
+        self._pos_x.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._pos_x.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._pos_y = QSpinBox(self)
         self._pos_y.setRange(0, 4096)
-        form.addRow("X:", self._pos_x)
-        form.addRow("Y:", self._pos_y)
+        self._pos_y.setSuffix(" px")
+        self._pos_y.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._pos_y.setAlignment(Qt.AlignmentFlag.AlignRight)
+        form.addRow("Позиция X:", self._pos_x)
+        form.addRow("Позиция Y:", self._pos_y)
 
         # Прозрачность
-        opacity_label = QLabel("Прозрачность:", self)
+        opacity_label = QLabel("Прозрачность", self)
         self._opacity_value = QLabel(self)
         self._opacity_value.setObjectName("muted")
         opacity_row = QHBoxLayout()
@@ -84,19 +93,23 @@ class SettingsPanel(QFrame):
         self._click_through = QCheckBox(
             "Прозрачный для клика (click-through)", self)
         self._click_through.setToolTip(
-            "Мышь проходит сквозь оверлей — подход работает только с "
-            "клавиатурным управлением из лаунчера.")
+            "Мышь проходит сквозь оверлей. Шестерёнка в оверлее будет "
+            "недоступна — настройки открываются из этого окна.")
         self._show_dire = QCheckBox("Показать пики Dire", self)
 
-        # Приоритеты
+        # Кнопки оверлея/приоритетов/синхронизации
+        self._overlay_button = self._button(
+            "Показать оверлей", "secondary")
+        self._overlay_button.clicked.connect(
+            self.overlay_toggle_requested.emit)
         priorities_button = self._button(
             "Настроить приоритеты позиций…", "secondary")
         priorities_button.clicked.connect(self.priorities_requested.emit)
-
-        # Синхронизация
-        self._sync_button = self._button("Синхронизировать данные", "secondary")
+        self._sync_button = self._button(
+            "Синхронизировать OpenDota", "secondary")
         self._sync_button.setToolTip(
-            "Загружает героев и матчапы из OpenDota (до ~15 секунд).")
+            "Загружает героев, мету, контрпики и иконки из OpenDota. "
+            "Если сеть недоступна, остаются локальные данные.")
         self._sync_button.clicked.connect(
             lambda: self.sync_requested.emit(0))  # 0 — все герои
         self._supabase_note = QLabel(self)
@@ -104,9 +117,12 @@ class SettingsPanel(QFrame):
         self._supabase_note.setWordWrap(True)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(9)
         layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addSpacing(2)
+        layout.addWidget(self._section("ОВЕРЛЕЙ"))
         layout.addLayout(form)
         layout.addLayout(opacity_row)
         layout.addWidget(self._opacity)
@@ -114,7 +130,12 @@ class SettingsPanel(QFrame):
         layout.addWidget(self._theme)
         layout.addWidget(self._click_through)
         layout.addWidget(self._show_dire)
+        layout.addWidget(self._overlay_button)
+        layout.addSpacing(4)
+        layout.addWidget(self._section("ПРИОРИТЕТЫ"))
         layout.addWidget(priorities_button)
+        layout.addSpacing(4)
+        layout.addWidget(self._section("ДАННЫЕ"))
         layout.addWidget(self._sync_button)
         layout.addWidget(self._supabase_note)
         layout.addStretch(1)
@@ -124,6 +145,12 @@ class SettingsPanel(QFrame):
         layout.addWidget(version)
 
         self._connect_signals()
+
+    @staticmethod
+    def _section(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("sectionTitle")
+        return label
 
     @staticmethod
     def _button(text: str, kind: str = "secondary") -> QPushButton:
@@ -151,12 +178,18 @@ class SettingsPanel(QFrame):
         theme = str(initial.get("theme", "dark"))
         index = self._theme.findData(theme)
         self._theme.setCurrentIndex(index if index >= 0 else 0)
-        self._click_through.setChecked(bool(initial.get("click_through", True)))
+        self._click_through.setChecked(
+            bool(initial.get("click_through", False)))
         self._show_dire.setChecked(bool(initial.get("show_dire", True)))
 
     def set_sync_enabled(self, enabled: bool) -> None:
         """Вида кнопки синхронизации (busy-состояние в статусбаре)."""
         self._sync_button.setEnabled(enabled)
+
+    def set_overlay_visible(self, visible: bool) -> None:
+        """Синхронизирует текст кнопки с реальным состоянием оверлея."""
+        self._overlay_button.setText(
+            "Скрыть оверлей" if visible else "Показать оверлей")
 
     def set_supabase_note(self, enabled: bool) -> None:
         """Пояснение про Supabase (env-переменные)."""

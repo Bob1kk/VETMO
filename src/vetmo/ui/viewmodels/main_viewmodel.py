@@ -33,6 +33,8 @@ class MetaReportRow:
     delta_ban: float | None = None
     positions: list[int] = field(default_factory=list)
     patch_version: str | None = None
+    primary_attr: str = ""
+    attack_type: str = ""
 
 
 @dataclass
@@ -162,6 +164,10 @@ def _normalize_meta_row(row: object) -> MetaReportRow | None:
         delta_ban=_as_float(_field(row, "delta_ban")),
         positions=positions,
         patch_version=str(_field(row, "patch_version") or "") or None,
+        primary_attr=str(
+            _field(row, "primary_attr") or hero.get("primary_attr") or ""),
+        attack_type=str(
+            _field(row, "attack_type") or hero.get("attack_type") or ""),
     )
 
 

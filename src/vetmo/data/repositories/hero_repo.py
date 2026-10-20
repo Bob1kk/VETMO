@@ -51,8 +51,11 @@ class HeroRepository:
         """Количество героев в таблице."""
         return int(self._session.query(func.count(HeroORM.id)).scalar() or 0)
 
-    def upsert(self, hero: Hero) -> None:
-        """ON CONFLICT(name) DO UPDATE: без дублей, поля обновляются."""
+    def upsert(self, hero: Hero, commit: bool = True) -> None:
+        """ON CONFLICT(name) DO UPDATE: без дублей, поля обновляются.
+
+        commit=False — часть атомарной синхронизации каталога.
+        """
         stmt = sqlite_insert(HeroORM).values(
             id=hero.id if hero.id is not None else None,
             name=hero.name,
@@ -75,4 +78,5 @@ class HeroRepository:
             },
         )
         self._session.execute(stmt)
-        self._session.commit()
+        if commit:
+            self._session.commit()
