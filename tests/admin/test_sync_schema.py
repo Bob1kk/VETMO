@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from vetmo.infra.supabase_gateway import SupabaseGateway
 from vetmo.services.stratz_sync import (
     _optional_field,
     _supports_column,
@@ -26,10 +27,14 @@ class _Gateway:
         return self.rows
 
 
+def _probe(gateway: _Gateway, column: str) -> bool:
+    return _supports_column(cast(SupabaseGateway, gateway), column)
+
+
 def test_supported_column_is_probed() -> None:
     gateway = _Gateway(rows=[{"trigger_source": None}])
 
-    assert _supports_column(gateway, "trigger_source") is True
+    assert _probe(gateway, "trigger_source") is True
     assert gateway.calls == [
         {"table": "vetmo_sync_runs", "columns": "trigger_source", "limit": 1}
     ]
@@ -42,7 +47,7 @@ def test_missing_column_is_tolerated() -> None:
         )
     )
 
-    assert _supports_column(gateway, "trigger_source") is False
+    assert _probe(gateway, "trigger_source") is False
 
 
 def test_postgrest_schema_cache_error_is_tolerated() -> None:
@@ -53,14 +58,14 @@ def test_postgrest_schema_cache_error_is_tolerated() -> None:
         )
     )
 
-    assert _supports_column(gateway, "request_id") is False
+    assert _probe(gateway, "request_id") is False
 
 
 def test_other_select_errors_are_not_swallowed() -> None:
     gateway = _Gateway(error=RuntimeError("connection timeout"))
 
     with pytest.raises(RuntimeError, match="connection timeout"):
-        _supports_column(gateway, "request_id")
+        _probe(gateway, "request_id")
 
 
 def test_optional_field_only_when_column_exists_and_value_set() -> None:

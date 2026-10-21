@@ -92,7 +92,11 @@ class FakeRepository:
             },
         ]
         query = (search or "").casefold()
-        return [row for row in rows if not query or query in row["hero_name"].casefold()]
+        return [
+            row
+            for row in rows
+            if not query or query in str(row["hero_name"]).casefold()
+        ]
 
     def matchups(self, hero_id: int, patch_id: int | None = None) -> list[dict[str, Any]]:
         return [
@@ -148,7 +152,7 @@ class FakeClient:
         pass
 
 
-def _context() -> SimpleNamespace:
+def _context() -> Any:
     return SimpleNamespace(
         sync=FakeSync(),
         client=FakeClient(),

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
@@ -60,7 +59,7 @@ def test_sync_runner_emits_finished(
 
     def fake_sync_all(**kwargs: object) -> SyncStats:
         progress = kwargs["progress"]
-        assert isinstance(progress, Callable)
+        assert callable(progress)
         progress("  rank=0 pos=0: 127 строк")
         return stats
 
