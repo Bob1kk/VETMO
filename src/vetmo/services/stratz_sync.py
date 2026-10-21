@@ -100,6 +100,8 @@ def sync_all(
     ranks: range = range(0, 9),
     positions: range = range(0, 6),
     progress=print,
+    trigger: str | None = None,
+    request_id: str | None = None,
 ) -> SyncStats:
     """Выполняет полный sync reference-данных."""
     sync = SyncSettings.load()
@@ -129,6 +131,8 @@ def sync_all(
             run = gateway.insert("vetmo_sync_runs", [{
                 "status": "running", "source": "stratz",
                 "patch_version": current_name,
+                "trigger": trigger,
+                "request_id": request_id,
             }])
             run_id = int(run[0]["id"]) if run else None
 
@@ -309,6 +313,8 @@ def sync_all(
                     "finished_at": datetime.now(UTC).isoformat(),
                     "rows_meta": stats.rows_meta,
                     "rows_matchups": stats.rows_matchups,
+                    "trigger": trigger,
+                    "request_id": request_id,
                     "details": {
                         "slices": stats.slices,
                         "period_end": stats.period,
@@ -327,6 +333,8 @@ def sync_all(
                     {
                         "status": "error",
                         "finished_at": datetime.now(UTC).isoformat(),
+                        "trigger": trigger,
+                        "request_id": request_id,
                         "error": f"{type(exc).__name__}: {exc}"[:1000],
                     },
                     {"id": run_id},
