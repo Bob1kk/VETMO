@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from vetmo import __version__
 from vetmo.ui.app_context import AppContext
+from vetmo.ui.app_icon import rounded_brand_pixmap
 from vetmo.ui.monitor import move_launcher_to_screen, resolve_screen
 from vetmo.ui.overlay_window import OverlayWindow
 from vetmo.ui.settings_panel import SettingsPanel
@@ -130,10 +131,15 @@ class MainWindow(QMainWindow):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 8, 12, 8)
         header_layout.setSpacing(10)
-        mark = QLabel("V", header)
+        mark = QLabel(header)
         mark.setObjectName("brandMark")
         mark.setFixedSize(40, 40)
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand_pixmap = rounded_brand_pixmap(40)
+        if brand_pixmap.isNull():
+            mark.setText("V")
+        else:
+            mark.setPixmap(brand_pixmap)
         title_box = QVBoxLayout()
         title_box.setSpacing(0)
         brand = QLabel("VETMO", header)

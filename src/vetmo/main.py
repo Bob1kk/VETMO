@@ -33,10 +33,15 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
     from vetmo import __version__  # noqa: PLC0415
+    from vetmo.ui.app_icon import app_icon  # noqa: PLC0415
 
     QApplication.setApplicationName("VETMO")
     QApplication.setApplicationVersion(__version__)
     app = QApplication(sys.argv)
+
+    icon = app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
 
     window = build_app()
     window.show()

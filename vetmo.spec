@@ -52,6 +52,9 @@ a = Analysis(
             os.path.join(ROOT, "src", "vetmo", "data", "heroes_seed.json"),
             os.path.join("vetmo", "data"),
         ),
+        # Иконки приложения (ICO для exe/окна, BMP — исходник) в бандле.
+        (os.path.join(ROOT, "vetmo_icon.ico"), "."),
+        (os.path.join(ROOT, "vetmo_icon.bmp"), "."),
         # Кэш иконок всех героев (если он собран) — офлайн-иконки в exe.
         *(
             (os.path.join(_ICONS_DIR, name),
@@ -89,5 +92,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=os.path.join(ROOT, "vetmo_icon.ico"),
 )

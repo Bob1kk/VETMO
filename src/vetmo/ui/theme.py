@@ -84,9 +84,8 @@ QFrame#appHeader {
     border-radius: 16px;
 }
 QLabel#brandMark {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 $accent_hover, stop:1 $accent_pressed);
-    border: 1px solid $accent;
+    background: transparent;
+    border: none;
     border-radius: 11px;
     color: $on_accent;
     font-size: 18px;
