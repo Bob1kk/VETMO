@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -102,13 +103,29 @@ def sync_all(
     progress=print,
     trigger: str | None = None,
     request_id: str | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> SyncStats:
-    """Выполняет полный sync reference-данных."""
+    """Выполняет полный sync reference-данных.
+
+    ``should_stop`` опрашивается между срезами (ранги, позиции, брекеты
+    матчапов). Отмена кооперативная: текущий запрос завершается, уже
+    записанные строки остаются в БД, а ``errors`` пополняется сообщением
+    ``"sync отменён пользователем"``.
+    """
     sync = SyncSettings.load()
     client = StratzClient(sync.stratz_token)
     stats = SyncStats()
     gateway = None if dry_run else _service_gateway(sync)
     run_id: int | None = None
+    cancelled = False
+
+    def stop_requested() -> bool:
+        """Один раз фиксирует отмену и сообщает о ней в лог."""
+        nonlocal cancelled
+        if not cancelled and should_stop is not None and should_stop():
+            cancelled = True
+            progress("  отмена: завершаю текущий срез")
+        return cancelled
 
     try:
         versions = client.game_versions()
@@ -142,7 +159,7 @@ def sync_all(
         ban_rates: dict[int, dict[int, float]] = {}
         ban_deltas: dict[int, dict[int, float]] = {}
         prefetched: dict[tuple[int, int], list[dict[str, Any]]] = {}
-        if gateway is not None:
+        if gateway is not None and not stop_requested():
             try:
                 preview = client.win_day(bracket=None, position=0)
                 prefetched[(0, 0)] = preview
@@ -176,10 +193,14 @@ def sync_all(
                 progress(f"  ОШИБКА ban_day: {type(exc).__name__}: {exc}")
 
         for rank in ranks:
+            if stop_requested():
+                break
             bracket = RANK_BRACKETS.get(rank)
             raw_by_position: dict[int, list[dict[str, Any]]] = {}
             # Сначала позиции 1..5: их сумма нужна для доли героя на позиции.
             for position in [p for p in positions if p != 0]:
+                if stop_requested():
+                    break
                 try:
                     raw_by_position[position] = client.win_day(
                         bracket=bracket, position=position,
@@ -197,6 +218,8 @@ def sync_all(
             if 0 in positions:
                 ordered_positions.append(0)
             for position in ordered_positions:
+                if stop_requested():
+                    break
                 try:
                     raw: list[dict[str, Any]] = (
                         raw_by_position.get(position)
@@ -249,7 +272,7 @@ def sync_all(
                     progress(f"  ОШИБКА {message}")
                 time.sleep(0.1)
 
-        if include_matchups:
+        if include_matchups and not stop_requested():
             heroes = load_seed_heroes()
             hero_ids = [hero.id for hero in heroes]
             week = _week_start_timestamp(stats.period)
@@ -258,6 +281,8 @@ def sync_all(
             fetched: list[dict[str, Any]] = []
             failed_brackets: list[str] = []
             for rank_bracket, bracket in specs:
+                if stop_requested():
+                    break
                 try:
                     groups = client.matchup_groups(
                         hero_ids, take=300, week=week, bracket=bracket,
@@ -285,7 +310,11 @@ def sync_all(
                 time.sleep(0.1)
 
             stats.rows_matchups = len(fetched)
-            if gateway is not None and fetched and not failed_brackets:
+            if gateway is not None and cancelled:
+                # Частичные матчапы писать нельзя: delete+upsert заменил бы
+                # прошлый полный срез неполным.
+                stats.errors.append("matchups: запись пропущена из-за отмены")
+            elif gateway is not None and fetched and not failed_brackets:
                 try:
                     # Полная замена матчапов патча: старые top-10 не должны
                     # оставаться, если герой выпал из десятки после обновления.
@@ -304,6 +333,9 @@ def sync_all(
                     "matchups: запись пропущена, чтобы не потерять старые "
                     f"данные (сбои: {', '.join(failed_brackets)})")
 
+        if cancelled:
+            stats.errors.append("sync отменён пользователем")
+
         if gateway is not None and run_id is not None:
             status = "ok" if not stats.errors else "partial"
             gateway.update(
@@ -318,6 +350,7 @@ def sync_all(
                     "details": {
                         "slices": stats.slices,
                         "period_end": stats.period,
+                        "cancelled": cancelled,
                         "errors": stats.errors[:20],
                     },
                     "error": "; ".join(stats.errors[:5]) or None,
