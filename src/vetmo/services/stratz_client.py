@@ -7,6 +7,7 @@ Chrome проходит. Токен передаётся только в заг�
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any
 
@@ -102,6 +103,9 @@ class StratzClient:
     def __init__(self, token: str, url: str = "https://api.stratz.com/graphql") -> None:
         self._url = url
         self._session: requests.Session = requests.Session(impersonate="chrome")
+        proxy = os.environ.get("VETMO_SYNC_STRATZ_PROXY", "").strip()
+        if proxy:
+            self._session.proxies = {"http": proxy, "https": proxy}
         self._session.headers.update({
             "Authorization": f"Bearer {token}",
             "User-Agent": "VETMO/0.2",

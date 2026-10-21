@@ -14,15 +14,22 @@ def main() -> int:
         print("VETMO_SYNC_STRATZ_TOKEN не задан", file=sys.stderr)
         return 2
 
-    response = requests.post(
-        "https://api.stratz.com/graphql",
-        headers={
+    proxy = os.environ.get("VETMO_SYNC_STRATZ_PROXY", "").strip()
+    kwargs: dict[str, object] = {
+        "headers": {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
-        json={"query": "query { __typename }"},
-        impersonate="chrome",
-        timeout=30,
+        "json": {"query": "query { __typename }"},
+        "impersonate": "chrome",
+        "timeout": 30,
+    }
+    if proxy:
+        kwargs["proxies"] = {"http": proxy, "https": proxy}
+
+    response = requests.post(
+        "https://api.stratz.com/graphql",
+        **kwargs,
     )
     print(f"STRATZ HTTP status: {response.status_code}")
     if response.status_code != 200:
