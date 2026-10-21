@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: runner
 
       - name: Setup Python and uv
         uses: astral-sh/setup-uv@v3
@@ -84,6 +86,4 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"repository\":\"${{ github.repository }}\",\"run_id\":\"${{ github.run_id }}\",\"mode\":\"${{ inputs.mode }}\",\"status\":\"completed\"}" || true
         env:
-          # Placeholder: реальный URL вебхука n8n настраивается как репозиторный секрет
-          # N8N_CALLBACK_URL и не коммитится в репозиторий.
           N8N_CALLBACK_URL: ${{ secrets.N8N_CALLBACK_URL }}
