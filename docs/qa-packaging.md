@@ -3,6 +3,30 @@
 Дата: 2026-10-21, ветка `beta2`.
 Последняя пересборка: 2026-10-21 19:16–19:19, после коммита `dc050ae`.
 
+## Пользовательский установщик и сборка без секретов
+
+Проверка выполнена после пересоздания локального `.venv` на Python 3.12.6
+(PyInstaller 6.22.3). Сборка запускалась через
+`.\scripts\build_release.ps1 -IsccPath <путь к ISCC.exe>`.
+
+- `dist/VETMO.exe` — 66 469 677 байт; SHA256
+  `72af8207b589b09caa416752e9ccc3f0a4c4bc60de9e57a44354143aeff3062f`.
+- `release/VETMO-Setup-0.1.0.exe` — 67 562 747 байт; SHA256
+  `56bcd1c1edbbf55c3e44b29b587eb2de46e961d294791b0e1daeb19505e7a0d8`.
+- Установщик per-user (`%LOCALAPPDATA%\Programs\VETMO`), без прав
+  администратора; ярлык в «Пуск», опционально на рабочий стол.
+- Тихая установка, запуск установленного exe и тихое удаление прошли.
+- В exe присутствует `vetmo.infra.public_config`, отсутствуют
+  `vetmo.admin`, `vetmo.infra.sync_settings`, `vetmo.services.stratz_client`,
+  `vetmo.services.stratz_sync`, `vetmo.services.stratz_aggregate`.
+- Smoke с временным пустым `APPDATA` (без `.env`/`secrets.env`): процесс жив,
+  лог создан, `Traceback` нет; запросы `vetmo_heroes` и
+  `vetmo_get_meta_report` вернули HTTP 200. Файлы секретов приложение не создало.
+- Анонимная авторизация Supabase возвращает 422; это ожидаемо для текущей
+  схемы. Настройки и драфты сохраняются локально (fallback).
+- Артефакты не подписаны Authenticode; для публичного релиза нужен
+  код-сертификат, иначе возможен warning SmartScreen.
+
 ## Пересборка после `dc050ae`
 
 Коммит `dc050ae` — `fix(sync): tolerate missing sync_runs trace columns`:

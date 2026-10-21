@@ -28,7 +28,7 @@ class SupabaseClient:
 
     def sync_meta_snapshot(self, limit: int = 50) -> dict[str, Any]:
         """Отправляет топ мета-снэпшоты; ошибки глотаются (best-effort)."""
-        if not self._settings.supabase_url or not self._settings.supabase_key:
+        if not self._settings.supabase_url or not self._settings.supabase_publishable_key:
             return {"enabled": False, "sent": 0}
         payload = self._collect_payload(limit)
         if not payload:
@@ -64,9 +64,10 @@ class SupabaseClient:
     def _post(self, payload: list[dict[str, Any]]) -> int:
         """POST к REST: удачные записи считаем; ошибки — в лог, 0."""
         url = f"{self._settings.supabase_url}/rest/v1/vetmo_meta"
+        key = self._settings.supabase_publishable_key or ""
         headers = {
-            "apikey": self._settings.supabase_key or "",
-            "Authorization": f"Bearer {self._settings.supabase_key}",
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
         try:
