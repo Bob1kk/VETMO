@@ -15,8 +15,13 @@ build/
 
 # Секреты
 .env
+.env.local
 pop.txt
 secrets.env
+api.txt
+n8n_api_key.txt
+*.n8n.key
+n8n/.secrets
 
 # Логи и БД
 logs/
