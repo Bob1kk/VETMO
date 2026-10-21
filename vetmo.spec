@@ -34,6 +34,13 @@ _EXCLUDES = [
     "numpy.f2py",
     "numpy.tests",
     "numpy.distutils",
+    # Admin и sync-код не входят в пользовательскую сборку (T-114):
+    # service_role/STRATZ-токен живут только в VETMO-Admin.exe.
+    "vetmo.admin",
+    "vetmo.infra.sync_settings",
+    "vetmo.services.stratz_client",
+    "vetmo.services.stratz_sync",
+    "vetmo.services.stratz_aggregate",
 ]
 
 
