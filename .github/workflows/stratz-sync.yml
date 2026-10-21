@@ -37,6 +37,7 @@ jobs:
         id: probe
         env:
           VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+          VETMO_SYNC_STRATZ_PROXY: ${{ secrets.VETMO_SYNC_STRATZ_PROXY }}
         run: |
           if python tools/probe_stratz.py; then
             echo "status=200" >> $GITHUB_OUTPUT
@@ -58,6 +59,7 @@ jobs:
           VETMO_SYNC_SUPABASE_URL: ${{ secrets.VETMO_SYNC_SUPABASE_URL }}
           VETMO_SYNC_SERVICE_KEY: ${{ secrets.VETMO_SYNC_SERVICE_KEY }}
           VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+          VETMO_SYNC_STRATZ_PROXY: ${{ secrets.VETMO_SYNC_STRATZ_PROXY }}
 
       - name: Run STRATZ sync (full, with matchups)
         if: ${{ inputs.mode == 'full' && steps.probe.outputs.status == '200' }}
@@ -70,6 +72,7 @@ jobs:
           VETMO_SYNC_SUPABASE_URL: ${{ secrets.VETMO_SYNC_SUPABASE_URL }}
           VETMO_SYNC_SERVICE_KEY: ${{ secrets.VETMO_SYNC_SERVICE_KEY }}
           VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+          VETMO_SYNC_STRATZ_PROXY: ${{ secrets.VETMO_SYNC_STRATZ_PROXY }}
 
       - name: n8n callback (placeholder URL)
         if: always()
