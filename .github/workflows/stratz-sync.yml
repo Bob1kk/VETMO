@@ -1,0 +1,68 @@
+name: STRATZ sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Режим синхронизации STRATZ -> Supabase"
+        required: true
+        default: "full"
+        type: choice
+        options:
+          - meta
+          - full
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python and uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --no-dev --frozen
+
+      - name: Run STRATZ sync (meta only)
+        if: ${{ inputs.mode == 'meta' }}
+        run: >
+          python tools/sync_stratz.py
+          --no-matchups
+          --trigger workflow_dispatch
+          --request-id ${{ github.run_id }}
+          --json
+        env:
+          VETMO_SYNC_SUPABASE_URL: ${{ secrets.VETMO_SYNC_SUPABASE_URL }}
+          VETMO_SYNC_SERVICE_KEY: ${{ secrets.VETMO_SYNC_SERVICE_KEY }}
+          VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+
+      - name: Run STRATZ sync (full, with matchups)
+        if: ${{ inputs.mode == 'full' }}
+        run: >
+          python tools/sync_stratz.py
+          --trigger workflow_dispatch
+          --request-id ${{ github.run_id }}
+          --json
+        env:
+          VETMO_SYNC_SUPABASE_URL: ${{ secrets.VETMO_SYNC_SUPABASE_URL }}
+          VETMO_SYNC_SERVICE_KEY: ${{ secrets.VETMO_SYNC_SERVICE_KEY }}
+          VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+
+      - name: n8n callback (placeholder URL)
+        if: always()
+        run: |
+          curl -fsS -X POST "${N8N_CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -d "{\"repository\":\"${{ github.repository }}\",\"run_id\":\"${{ github.run_id }}\",\"mode\":\"${{ inputs.mode }}\",\"status\":\"completed\"}" || true
+        env:
+          # Placeholder: реальный URL вебхука n8n настраивается как репозиторный секрет
+          # N8N_CALLBACK_URL и не коммитится в репозиторий.
+          N8N_CALLBACK_URL: ${{ secrets.N8N_CALLBACK_URL }}
