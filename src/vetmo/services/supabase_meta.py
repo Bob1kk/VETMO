@@ -24,6 +24,17 @@ _META_COLUMNS = (
     "positions,patch_version,match_count,ban_scope"
 )
 
+# Порог, при котором метрика считается надёжной (совпадает с sync STRATZ).
+_MIN_RELIABLE_MATCHES = 50
+
+
+def _sample_reliable(row: dict[str, Any], match_count: int) -> bool:
+    """Флаг из БД; для старых RPC без колонки — вывод из размера выборки."""
+    raw = row.get("sample_reliable")
+    if raw is not None:
+        return bool(raw)
+    return match_count >= _MIN_RELIABLE_MATCHES
+
 _POSITION_COLUMNS = (
     "hero_id,position,pick_share,win_rate,match_count,is_popular"
 )
@@ -93,6 +104,7 @@ def _position_details(value: object) -> dict[int, PositionStat]:
 def _to_meta_row(row: dict[str, Any]) -> MetaRow:
     hero = _hero_from_row(row)
     details = _position_details(row.get("position_details"))
+    match_count = _as_int(row.get("match_count")) or 0
     return MetaRow(
         hero_id=hero.id,
         name=hero.localized_name or hero.name,
@@ -106,9 +118,9 @@ def _to_meta_row(row: dict[str, Any]) -> MetaRow:
         positions=_positions(row.get("positions")) or sorted(details),
         position_stats=details,
         patch_version=str(row.get("patch_version") or "") or None,
-        match_count=_as_int(row.get("match_count")) or 0,
+        match_count=match_count,
         ban_scope=str(row.get("ban_scope") or "") or None,
-        sample_reliable=bool(row.get("sample_reliable") or False),
+        sample_reliable=_sample_reliable(row, match_count),
     )
 
 
