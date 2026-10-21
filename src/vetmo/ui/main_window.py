@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
         self._overlay_visible = False
         self._overlay_busy = False
         self._overlay_pending = False
+        self._sync_busy = False
 
         self._build_ui()
         self._build_shortcuts()
@@ -120,6 +121,13 @@ class MainWindow(QMainWindow):
         new_session.setObjectName("headerGhost")
         new_session.setToolTip("Начать драфт с шага 0/10")
         new_session.clicked.connect(self._start_draft_session)
+        refresh_db = QPushButton("Обновить из БД", self)
+        refresh_db.setObjectName("headerGhost")
+        refresh_db.setToolTip(
+            "Перечитать мету, патчи и новости из Supabase. Только чтение — "
+            "запись выполняет VETMO Admin.")
+        refresh_db.clicked.connect(self._refresh_from_db)
+        self._refresh_db_button = refresh_db
         manual = QPushButton("Ручной пик…", self)
         manual.setObjectName("headerGhost")
         manual.setToolTip("Записать пик вручную")
@@ -151,6 +159,7 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(mark)
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)
+        header_layout.addWidget(refresh_db)
         header_layout.addWidget(new_session)
         header_layout.addWidget(manual)
         header_layout.addWidget(self._toggle_overlay)
@@ -193,6 +202,9 @@ class MainWindow(QMainWindow):
         overlay_settings = QShortcut(QKeySequence("Ctrl+,"), self)
         overlay_settings.setContext(Qt.ShortcutContext.WindowShortcut)
         overlay_settings.activated.connect(self._open_overlay_settings)
+        refresh_db = QShortcut(QKeySequence("Ctrl+R"), self)
+        refresh_db.setContext(Qt.ShortcutContext.WindowShortcut)
+        refresh_db.activated.connect(self._refresh_from_db)
 
     def _apply_launcher_screen(self) -> None:
         """Открывает лаунчер на выбранном мониторе (по умолчанию второй)."""
@@ -302,13 +314,25 @@ class MainWindow(QMainWindow):
         self.status(f"Ошибка: {message}")
 
     # ------------------------------------------------------------ обновление --
+    def _refresh_from_db(self) -> None:
+        """Кнопка «Обновить из БД»: только чтение Supabase (T-111)."""
+        if self._sync_busy:
+            self.status("Обновление из БД уже выполняется…")
+            return
+        self.status("Перечитываем данные из Supabase (только чтение)…")
+        self._start_sync()
+
     def _start_sync(self, limit: int = 0, auto: bool = False) -> None:
         """«Обновить данные»: сбросить кэши и перечитать Supabase.
 
         Reference-данные пишет отдельный sync-скрипт с service_role; приложение
         никогда не выполняет DDL/запись меты.
         """
+        if self._sync_busy:
+            return
+        self._sync_busy = True
         self._settings_panel.set_sync_enabled(False)
+        self._refresh_db_button.setEnabled(False)
         self.status("Перечитываем данные из Supabase…")
 
         def job() -> int:
@@ -319,7 +343,9 @@ class MainWindow(QMainWindow):
 
     def _sync_done(self, count: object) -> None:
         """Обновляет все экраны после перечитывания Supabase."""
+        self._sync_busy = False
         self._settings_panel.set_sync_enabled(True)
+        self._refresh_db_button.setEnabled(True)
         number = count if isinstance(count, int) else 0
         self.status(f"Данные Supabase обновлены. Героев: {number}")
         self._load_patches()
@@ -328,7 +354,9 @@ class MainWindow(QMainWindow):
         self._refresh_overlay()
 
     def _sync_fail(self, message: str) -> None:
+        self._sync_busy = False
         self._settings_panel.set_sync_enabled(True)
+        self._refresh_db_button.setEnabled(True)
         self.status(f"Не удалось перечитать Supabase: {message}")
         self._load_news()
         self._load_meta()
