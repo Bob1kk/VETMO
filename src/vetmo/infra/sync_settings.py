@@ -1,4 +1,4 @@
-"""Настройки sync-скрипта: service_role и STRATZ token.
+"""Настройки sync-скрипта: service_role, STRATZ и OpenDota.
 
 Эти значения НЕ читаются приложением и НЕ попадают в exe.
 Файл по умолчанию: %APPDATA%/VETMO/secrets.env (вне OneDrive).
@@ -26,12 +26,25 @@ def default_secrets_path() -> Path:
 
 @dataclass(slots=True)
 class SyncSettings:
-    """Параметры записи в Supabase и доступа к STRATZ."""
+    """Параметры записи в Supabase и доступа к внешним API.
+
+    service_role + STRATZ token — только для sync-скрипта.
+    OpenDota не требует токена, поэтому его настройки могут храниться
+    также в публичном конфиге приложения (опционально).
+    """
 
     supabase_url: str
     service_key: str
     stratz_token: str
     stratz_api_url: str = "https://api.stratz.com/graphql"
+    # OpenDota — публичный REST API без токена.
+    opendota_base_url: str = "https://api.opendota.com/api/"
+    opendota_rate_limit_per_min: int = 60
+    opendota_cache_ttl_hours: float = 24.0
+    # Поля, которые ожидает OpenDotaClient ( duck-typed settings ).
+    rate_limit_per_min: int = 60
+    cache_ttl_hours: float = 24.0
+    http_timeout: float = 45.0
     secrets_file: Path = field(default_factory=default_secrets_path)
 
     @classmethod
@@ -68,5 +81,19 @@ class SyncSettings:
             supabase_url=url,
             service_key=service,
             stratz_token=token,
+            opendota_base_url=pick("VETMO_SYNC_OPENDOTA_BASE_URL") or "https://api.opendota.com/api/",
+            opendota_rate_limit_per_min=int(
+                pick("VETMO_SYNC_OPENDOTA_RATE_LIMIT_PER_MIN") or "60"
+            ),
+            opendota_cache_ttl_hours=float(
+                pick("VETMO_SYNC_OPENDOTA_CACHE_TTL_HOURS") or "24.0"
+            ),
+            rate_limit_per_min=int(
+                pick("VETMO_SYNC_OPENDOTA_RATE_LIMIT_PER_MIN") or "60"
+            ),
+            cache_ttl_hours=float(
+                pick("VETMO_SYNC_OPENDOTA_CACHE_TTL_HOURS") or "24.0"
+            ),
+            http_timeout=float(pick("VETMO_SYNC_HTTP_TIMEOUT") or "45.0"),
             secrets_file=path,
         )

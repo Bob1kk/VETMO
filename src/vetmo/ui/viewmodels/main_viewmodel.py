@@ -214,14 +214,13 @@ class MainViewModel:
 
     def fetch_meta_report(
         self, limit: int = 40, rank_tier: int | None = None,
-        position: int | None = None, patch_id: int | None = None,
+        position: int | None = None,
     ) -> MetaReport:
-        """Мета-отчёт с фильтрами патча/ранга/позиции."""
+        """Мета-отчёт с фильтрами ранга/позиции (текущий патч)."""
         if self._meta_report_loader is None:
             raise RuntimeError("Синхронизация меты недоступна")
         result = self._meta_report_loader(
             limit=limit, rank_tier=rank_tier, position=position,
-            patch_id=patch_id,
         )
         raw_rows, rank_supported = result[0], result[1]
         period = result[2] if len(result) > 2 else None

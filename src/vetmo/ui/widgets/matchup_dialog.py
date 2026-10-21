@@ -71,7 +71,7 @@ class MatchupDialog(QDialog):
         icon_url: str | None,
         internal_name: str | None,
         rank_tier: int,
-        patch_id: int | None,
+        patch_id: int | None = None,
         loader: Callable[[int, int, int | None], MatchupReport],
         parent: QWidget | None = None,
     ) -> None:

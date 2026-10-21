@@ -61,7 +61,6 @@ def test_search_and_stats_use_loaded_rows(qtbot) -> None:
     widget.set_meta(_report())
 
     assert widget.row_count() == 2
-    assert widget._patch_label.text() == "ПАТЧ 7.41"
     assert widget._stat_leader._value_label.text() == "Anti-Mage"
 
     widget._search.setText("axe")

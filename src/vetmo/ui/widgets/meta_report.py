@@ -1,11 +1,11 @@
-"""Центральная панель лаунчера: мета героев (STRATZ через Supabase).
+"""Центральная панель лаунчера: мета героев (через Supabase).
 
-Структура: заголовок с патчем, сводные карточки, поиск/сортировка, фильтры
-по позиции и рангу, таблица всех героев. Данные приходят из
-``MainViewModel.meta_updated``; иконки — локальный кэш -> CDN -> плейсхолдер.
+Структура: сводные карточки, поиск/сортировка, фильтры по позиции и рангу,
+таблица всех героев. Данные приходят из ``MainViewModel.meta_updated``;
+иконки — локальный кэш -> CDN -> плейсхолдер.
 
-Метрики считает sync-скрипт STRATZ и складывает в Supabase; в UI приходят
-уже готовые значения. ``positions`` — только популярные позиции героя
+Метрики считает sync-скрипт и складывает в Supabase; в UI приходят уже
+готовые значения. ``positions`` — только популярные позиции героя
 (доля пиков выше порога), ``position_details`` — доля пиков/WR/матчи для
 тултипа. Если деталей нет, подсказка не выдумывает источник.
 """
@@ -52,7 +52,7 @@ _ROW_HEIGHT = 52
 
 _COL_RANK, _COL_HERO, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK, _COL_DPICK, _COL_BAN = range(8)
 _HEADERS = (
-    "#", "ГЕРОЙ", "ПОЗИЦИИ", "ВИНРЕЙТ", "Δ WR", "ПИКИ", "Δ ПИК", "БАНЫ",
+    "#", "ГЕРОЙ", "ПОЗИЦИИ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "ИЗМЕНЕНИЕ", "БАНЫ",
 )
 
 _POSITION_OPTIONS: tuple[tuple[str, int], ...] = (
@@ -405,16 +405,12 @@ class MetaReportWidget(QFrame):
         self._matchup_pending: set[int] = set()
         self._rank_supported = True
 
-        self._patch_label = QLabel("ПАТЧ —", self)
-        self._patch_label.setObjectName("patchPill")
-
         self._status = QLabel(self)
         self._status.setObjectName("stateInfo")
         self._status.setWordWrap(True)
         self._status.hide()
 
         self._table = self._build_table()
-        self._patch = self._build_combo((("Текущий патч", None),), "Патч")
         self._position = self._build_combo(_POSITION_OPTIONS, "Позиция")
         self._rank = self._build_combo(_RANK_OPTIONS, "Ранг")
         self._sort = self._build_combo(_SORT_OPTIONS, "Сортировка")
@@ -452,13 +448,11 @@ class MetaReportWidget(QFrame):
         title_box.addWidget(self._subtitle)
         title_row.addLayout(title_box)
         title_row.addStretch(1)
-        title_row.addWidget(self._patch_label)
         toolbar_layout.addLayout(title_row)
 
         controls = QHBoxLayout()
         controls.setSpacing(6)
         controls.addWidget(self._search, 3)
-        controls.addWidget(self._patch, 1)
         controls.addWidget(self._position, 1)
         controls.addWidget(self._rank, 1)
         controls.addWidget(self._sort, 1)
@@ -480,7 +474,6 @@ class MetaReportWidget(QFrame):
 
         self._search.textChanged.connect(self._apply_view)
         self._sort.currentIndexChanged.connect(self._apply_view)
-        self._patch.currentIndexChanged.connect(self._on_server_filter)
         self._position.currentIndexChanged.connect(self._on_server_filter)
         self._rank.currentIndexChanged.connect(self._on_server_filter)
         self._reset_button.clicked.connect(self._reset_filters)
@@ -552,7 +545,7 @@ class MetaReportWidget(QFrame):
         self.filters_changed.emit()
 
     def _reset_filters(self) -> None:
-        for combo in (self._patch, self._position, self._rank):
+        for combo in (self._position, self._rank):
             combo.blockSignals(True)
             combo.setCurrentIndex(0)
             combo.blockSignals(False)
@@ -570,36 +563,6 @@ class MetaReportWidget(QFrame):
             None if not isinstance(position, int) or position < 1 else position,
             None if not isinstance(rank, int) or rank < 1 else rank,
         )
-
-    def selected_patch(self) -> int | None:
-        """id выбранного патча; None — текущий."""
-        value = self._patch.currentData()
-        return int(value) if isinstance(value, int) and value > 0 else None
-
-    def set_patches(self, patches: list[object]) -> None:
-        """Заполняет поиск по патчам (PatchInfo или dict)."""
-        current = self.selected_patch()
-        self._patch.blockSignals(True)
-        self._patch.clear()
-        self._patch.addItem("Текущий патч", None)
-        for patch in patches:
-            if isinstance(patch, dict):
-                patch_id = patch.get("id")
-                version = patch.get("version")
-                is_current = bool(patch.get("is_current"))
-            else:
-                patch_id = getattr(patch, "id", None)
-                version = getattr(patch, "version", None)
-                is_current = bool(getattr(patch, "is_current", False))
-            if not isinstance(patch_id, int) or not version:
-                continue
-            suffix = " · текущий" if is_current else ""
-            self._patch.addItem(f"{version}{suffix}", patch_id)
-        if current is not None:
-            index = self._patch.findData(current)
-            if index >= 0:
-                self._patch.setCurrentIndex(index)
-        self._patch.blockSignals(False)
 
     def search_text(self) -> str:
         """Текст поиска (для тестов/смоука)."""
@@ -630,7 +593,6 @@ class MetaReportWidget(QFrame):
         self._all_rows = []
         self._view_rows = []
         self._table.setRowCount(0)
-        self._patch_label.setText("ПАТЧ —")
         self._count_label.setText("Нет данных")
         self._update_stats([])
         self._set_state(
@@ -648,9 +610,6 @@ class MetaReportWidget(QFrame):
     def set_meta(self, report: MetaReport) -> None:
         """Экран данных: все строки среза, затем клиентская фильтрация."""
         self._rank_supported = report.rank_supported
-        version = report.patch_version
-        self._patch_label.setText(
-            f"ПАТЧ {version.upper()}" if version else "ПАТЧ —")
         if report.period:
             self._subtitle.setText(f"Ranked All Pick · {report.period}")
         else:
@@ -758,7 +717,7 @@ class MetaReportWidget(QFrame):
         cells.append(wr_cell)
 
         delta_wr = DeltaCell(row.delta_win, self._table)
-        delta_wr.setToolTip("Δ WR за 7 дней")
+        delta_wr.setToolTip("Изменение винрейта по сравнению с предыдущим окном")
         self._table.setCellWidget(index, _COL_DWR, delta_wr)
         cells.append(delta_wr)
 
@@ -770,7 +729,7 @@ class MetaReportWidget(QFrame):
         cells.append(pick_cell)
 
         delta_pick = DeltaCell(row.delta_pick, self._table)
-        delta_pick.setToolTip("Δ пиков за 7 дней")
+        delta_pick.setToolTip("Изменение доли пиков по сравнению с предыдущим окном")
         self._table.setCellWidget(index, _COL_DPICK, delta_pick)
         cells.append(delta_pick)
 
@@ -852,7 +811,6 @@ class MetaReportWidget(QFrame):
             icon_url=row.icon_url,
             internal_name=row.internal_name,
             rank_tier=rank_tier,
-            patch_id=self.selected_patch(),
             loader=self._matchup_details_loader,
             parent=self.window(),
         )

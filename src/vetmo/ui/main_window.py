@@ -230,7 +230,6 @@ class MainWindow(QMainWindow):
     def _startup(self) -> None:
         """Первичная загрузка: Supabase читается в worker, UI не блокируется."""
         self.status("Загружаем данные из Supabase…")
-        self._load_patches()
         self._load_news()
         self._load_meta()
         self._news_timer.start()
@@ -251,14 +250,6 @@ class MainWindow(QMainWindow):
         self._refresh_overlay()
 
     # ------------------------------------------------------- data loading --
-    def _load_patches(self) -> None:
-        """Список патчей для поиска/фильтра (Supabase, worker)."""
-        start_worker(
-            self._ctx.patches, 30,
-            on_done=self._meta_widget.set_patches,
-            on_fail=lambda _msg: None,
-        )
-
     def _load_news(self) -> None:
         """Новости: worker -> MainViewModel -> NewsWidget."""
         self._news_widget.set_loading()
@@ -277,10 +268,9 @@ class MainWindow(QMainWindow):
         """Мета-отчёт с фильтрами: worker -> MainViewModel -> MetaReportWidget."""
         self._meta_widget.set_loading()
         position, rank_tier = self._meta_widget.filters()
-        patch_id = self._meta_widget.selected_patch()
         start_worker(
             self._vm.fetch_meta_report,
-            _META_ROWS_LIMIT, rank_tier, position, patch_id,
+            _META_ROWS_LIMIT, rank_tier, position,
             on_done=self._vm.publish_meta_report,
             on_fail=self._meta_widget.set_error,
         )
@@ -348,7 +338,6 @@ class MainWindow(QMainWindow):
         self._refresh_db_button.setEnabled(True)
         number = count if isinstance(count, int) else 0
         self.status(f"Данные Supabase обновлены. Героев: {number}")
-        self._load_patches()
         self._load_news()
         self._load_meta()
         self._refresh_overlay()
