@@ -38,20 +38,12 @@ jobs:
         env:
           VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
         run: |
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST https://api.stratz.com/graphql \
-            -H "Authorization: Bearer $VETMO_SYNC_STRATZ_TOKEN" \
-            -H "Content-Type: application/json" \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-            -d '{"query":"query { __typename }"}')
-          echo "STRATZ HTTP status: $HTTP_CODE"
-          echo "status=$HTTP_CODE" >> $GITHUB_OUTPUT
-          if [ "$HTTP_CODE" = "403" ]; then
-            echo "::error::STRATZ Cloudflare вернул 403 — gate остановлен, план не продолжается."
+          if python tools/probe_stratz.py; then
+            echo "status=200" >> $GITHUB_OUTPUT
+          else
+            echo "status=403" >> $GITHUB_OUTPUT
+            echo "::error::STRATZ Cloudflare gate не пройден (curl_cffi)."
             exit 1
-          fi
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::warning::STRATZ вернул неожиданный статус $HTTP_CODE, продолжаем."
           fi
 
       - name: Run STRATZ sync (meta only)
