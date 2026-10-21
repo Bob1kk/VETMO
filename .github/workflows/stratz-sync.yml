@@ -1,0 +1,91 @@
+﻿name: STRATZ sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "╨а╨╡╨╢╨╕╨╝ ╤Б╨╕╨╜╤Е╤А╨╛╨╜╨╕╨╖╨░╤Ж╨╕╨╕ STRATZ -> Supabase"
+        required: true
+        default: "full"
+        type: choice
+        options:
+          - meta
+          - full
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: runner
+
+      - name: Setup Python and uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --no-dev --frozen
+
+      - name: Probe STRATZ Cloudflare gate
+        id: probe
+        env:
+          VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST https://api.stratz.com/graphql \
+            -H "Authorization: Bearer $VETMO_SYNC_STRATZ_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+            -d '{"query":"query { __typename }"}')
+          echo "STRATZ HTTP status: $HTTP_CODE"
+          echo "status=$HTTP_CODE" >> $GITHUB_OUTPUT
+          if [ "$HTTP_CODE" = "403" ]; then
+            echo "::error::STRATZ Cloudflare ╨▓╨╡╤А╨╜╤Г╨╗ 403 тАФ gate ╨╛╤Б╤В╨░╨╜╨╛╨▓╨╗╨╡╨╜, ╨┐╨╗╨░╨╜ ╨╜╨╡ ╨┐╤А╨╛╨┤╨╛╨╗╨╢╨░╨╡╤В╤Б╤П."
+            exit 1
+          fi
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::STRATZ ╨▓╨╡╤А╨╜╤Г╨╗ ╨╜╨╡╨╛╨╢╨╕╨┤╨░╨╜╨╜╤Л╨╣ ╤Б╤В╨░╤В╤Г╤Б $HTTP_CODE, ╨┐╤А╨╛╨┤╨╛╨╗╨╢╨░╨╡╨╝."
+          fi
+
+      - name: Run STRATZ sync (meta only)
+        if: ${{ inputs.mode == 'meta' && steps.probe.outputs.status == '200' }}
+        run: >
+          python tools/sync_stratz.py
+          --no-matchups
+          --trigger workflow_dispatch
+          --request-id ${{ github.run_id }}
+          --json
+        env:
+          VETMO_SYNC_SUPABASE_URL: ${{ secrets.VETMO_SYNC_SUPABASE_URL }}
+          VETMO_SYNC_SERVICE_KEY: ${{ secrets.VETMO_SYNC_SERVICE_KEY }}
+          VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+
+      - name: Run STRATZ sync (full, with matchups)
+        if: ${{ inputs.mode == 'full' && steps.probe.outputs.status == '200' }}
+        run: >
+          python tools/sync_stratz.py
+          --trigger workflow_dispatch
+          --request-id ${{ github.run_id }}
+          --json
+        env:
+          VETMO_SYNC_SUPABASE_URL: ${{ secrets.VETMO_SYNC_SUPABASE_URL }}
+          VETMO_SYNC_SERVICE_KEY: ${{ secrets.VETMO_SYNC_SERVICE_KEY }}
+          VETMO_SYNC_STRATZ_TOKEN: ${{ secrets.VETMO_SYNC_STRATZ_TOKEN }}
+
+      - name: n8n callback (placeholder URL)
+        if: always()
+        run: |
+          curl -fsS -X POST "${N8N_CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -d "{\"repository\":\"${{ github.repository }}\",\"run_id\":\"${{ github.run_id }}\",\"mode\":\"${{ inputs.mode }}\",\"status\":\"completed\"}" || true
+        env:
+          # Placeholder: ╤А╨╡╨░╨╗╤М╨╜╤Л╨╣ URL ╨▓╨╡╨▒╤Е╤Г╨║╨░ n8n ╨╜╨░╤Б╤В╤А╨░╨╕╨▓╨░╨╡╤В╤Б╤П ╨║╨░╨║ ╤А╨╡╨┐╨╛╨╖╨╕╤В╨╛╤А╨╜╤Л╨╣ ╤Б╨╡╨║╤А╨╡╤В
+          # N8N_CALLBACK_URL ╨╕ ╨╜╨╡ ╨║╨╛╨╝╨╝╨╕╤В╨╕╤В╤Б╤П ╨▓ ╤А╨╡╨┐╨╛╨╖╨╕╤В╨╛╤А╨╕╨╣.
+          N8N_CALLBACK_URL: ${{ secrets.N8N_CALLBACK_URL }}
