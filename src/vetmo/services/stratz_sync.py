@@ -148,7 +148,7 @@ def sync_all(
             run = gateway.insert("vetmo_sync_runs", [{
                 "status": "running", "source": "stratz",
                 "patch_version": current_name,
-                "trigger": trigger,
+                "trigger_source": trigger,
                 "request_id": request_id,
             }])
             run_id = int(run[0]["id"]) if run else None
@@ -345,7 +345,7 @@ def sync_all(
                     "finished_at": datetime.now(UTC).isoformat(),
                     "rows_meta": stats.rows_meta,
                     "rows_matchups": stats.rows_matchups,
-                    "trigger": trigger,
+                    "trigger_source": trigger,
                     "request_id": request_id,
                     "details": {
                         "slices": stats.slices,
@@ -366,7 +366,7 @@ def sync_all(
                     {
                         "status": "error",
                         "finished_at": datetime.now(UTC).isoformat(),
-                        "trigger": trigger,
+                        "trigger_source": trigger,
                         "request_id": request_id,
                         "error": f"{type(exc).__name__}: {exc}"[:1000],
                     },
