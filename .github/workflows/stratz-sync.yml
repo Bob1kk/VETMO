@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "╨а╨╡╨╢╨╕╨╝ ╤Б╨╕╨╜╤Е╤А╨╛╨╜╨╕╨╖╨░╤Ж╨╕╨╕ STRATZ -> Supabase"
+        description: "Режим синхронизации STRATZ -> Supabase"
         required: true
         default: "full"
         type: choice
@@ -47,11 +47,11 @@ jobs:
           echo "STRATZ HTTP status: $HTTP_CODE"
           echo "status=$HTTP_CODE" >> $GITHUB_OUTPUT
           if [ "$HTTP_CODE" = "403" ]; then
-            echo "::error::STRATZ Cloudflare ╨▓╨╡╤А╨╜╤Г╨╗ 403 тАФ gate ╨╛╤Б╤В╨░╨╜╨╛╨▓╨╗╨╡╨╜, ╨┐╨╗╨░╨╜ ╨╜╨╡ ╨┐╤А╨╛╨┤╨╛╨╗╨╢╨░╨╡╤В╤Б╤П."
+            echo "::error::STRATZ Cloudflare вернул 403 — gate остановлен, план не продолжается."
             exit 1
           fi
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "::warning::STRATZ ╨▓╨╡╤А╨╜╤Г╨╗ ╨╜╨╡╨╛╨╢╨╕╨┤╨░╨╜╨╜╤Л╨╣ ╤Б╤В╨░╤В╤Г╤Б $HTTP_CODE, ╨┐╤А╨╛╨┤╨╛╨╗╨╢╨░╨╡╨╝."
+            echo "::warning::STRATZ вернул неожиданный статус $HTTP_CODE, продолжаем."
           fi
 
       - name: Run STRATZ sync (meta only)
@@ -86,6 +86,4 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"repository\":\"${{ github.repository }}\",\"run_id\":\"${{ github.run_id }}\",\"mode\":\"${{ inputs.mode }}\",\"status\":\"completed\"}" || true
         env:
-          # Placeholder: ╤А╨╡╨░╨╗╤М╨╜╤Л╨╣ URL ╨▓╨╡╨▒╤Е╤Г╨║╨░ n8n ╨╜╨░╤Б╤В╤А╨░╨╕╨▓╨░╨╡╤В╤Б╤П ╨║╨░╨║ ╤А╨╡╨┐╨╛╨╖╨╕╤В╨╛╤А╨╜╤Л╨╣ ╤Б╨╡╨║╤А╨╡╤В
-          # N8N_CALLBACK_URL ╨╕ ╨╜╨╡ ╨║╨╛╨╝╨╝╨╕╤В╨╕╤В╤Б╤П ╨▓ ╤А╨╡╨┐╨╛╨╖╨╕╤В╨╛╤А╨╕╨╣.
           N8N_CALLBACK_URL: ${{ secrets.N8N_CALLBACK_URL }}
