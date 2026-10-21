@@ -16,11 +16,10 @@ from curl_cffi import requests
 logger = logging.getLogger("vetmo.stratz")
 
 WIN_DAY_QUERY = """
-query($take: Int!, $bracketIds: [RankBracket!], $positionIds: [MatchPlayerPositionType!]) {
+query($take: Int!, $positionIds: [MatchPlayerPositionType!]) {
   heroStats {
     winDay(
       take: $take
-      bracketIds: $bracketIds
       positionIds: $positionIds
       gameModeIds: [ALL_PICK_RANKED]
     ) {
@@ -159,14 +158,17 @@ class StratzClient:
     def win_day(
         self,
         *,
-        bracket: str | None,
-        position: int | None,
+        position: int | None = None,
         take: int = 3000,
     ) -> list[dict[str, Any]]:
-        """Сырые строки winDay (127 героев × доступные дни)."""
+        """Сырые строки winDay (127 героев × доступные дни).
+
+        ``bracketIds`` не передаётся: STRATZ возвращает HTTP 400 для
+        ранговых бракетов в ``winDay``. Данные за все ранги (rank 0).
+        Фильтр ``gameModeIds=[ALL_PICK_RANKED]`` задаётся в запросе, что
+        делает метрики сопоставимыми с референсными сайтами.
+        """
         variables: dict[str, Any] = {"take": int(take)}
-        if bracket:
-            variables["bracketIds"] = [bracket]
         if position is not None and int(position) > 0:
             variables["positionIds"] = [f"POSITION_{int(position)}"]
         data = self.execute(WIN_DAY_QUERY, variables)

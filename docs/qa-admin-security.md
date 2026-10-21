@@ -206,43 +206,39 @@ RLS-пробник запускался отдельным временным с
 
 ---
 
-## 10. Свежая мета: `stats` вместо `winDay`
+## 10. Свежая мета: `winDay` вместо `stats` (возврат к подходу бета-релиза)
 
 **Дата:** 2026-10-21.
 
 ### Причина
 
-`winDay` на 2026-10-21 отдавал только 17 дней с разрывом и максимум
-`2026-10-10` (см. `docs/stratz-actual-schema-notes.md`). Приложение показывало
-мету недельной давности. `winWeek` заканчивался `2026-10-01`, `winMonth` —
-августом, `winHour` — последними ~30 часами.
+`stats(week)` не поддерживает фильтр по игровому режиму (`gameModeIds`),
+поэтому возвращает данные по всем режимам (Turbo, Custom и др.), что
+размывает pick/win rate. Данные сильно разнились с референсными сайтами
+(dotabuff, opendota). Возврат к `winDay` с `gameModeIds=[ALL_PICK_RANKED]`
+— как в прошлом бета-релизе, где данные совпадали с референсами.
 
 ### Решение
 
-- Новый источник — `stats(week)` STRATZ: `week` принимает unix-время начала
-  недели (четверг). Текущая неделя — `2026-10-15…21`.
-- Запрос `groupByPosition: true` + `groupByBracket: true` даёт 3175 строк =
-  127 героев × 5 позиций × 5 групп (`UNCALIBRATED` + 4 калиброванные).
-- Агрегация собирает 54 среза rank 0..8 × position 0..5; ранги 1/2, 3/4, 5/6,
-  7/8 складываются в 4 группы, rank 0 — все группы.
-- Дельты win/pick — к предыдущей неделе; баны — `banDay` за 7 дней;
-  матчапы — `matchUp` текущей недели.
+- Источник — `winDay` с `gameModeIds=[ALL_PICK_RANKED]`, без `bracketIds`
+  (вызывает HTTP 400). Загружается rank 0 (все ранги) для позиций 0..5.
+- Бан-рейт по рангам — из `banDay` (загружается отдельно, поддерживает
+  ранги).
+- Матчапы — `matchUp` без `bracketBasicIds: [ALL]`.
+- winDay на 2026-10-21 отдаёт данные до `2026-10-10` (максимальный
+  доступный день). UI показывает фактический период.
 
 ### Проверки
 
-- `pytest` — **206 passed** (добавлены тесты `aggregate_hero_stats_week`:
-  позиции, ранги 0/1/8, `pick_share`, дельты, баны, популярность, мусорные
-  строки; недельное окно `_week_start_timestamp`/`_week_end_date`).
+- `pytest` — **206 passed** (тесты `aggregate_win_day`, `ban_rates_by_rank`,
+  недельное окно, существующие тесты).
 - `ruff check src tests` — чисто; `mypy src tests/admin` — чисто (91 файл).
-- Live-агрегация: 6858 строк, 54 среза; rank 0 position 0 — 127 героев,
-  сумма pick rate ≈ 1000%, каждая позиция ≈ 100%.
-- Реальный полный sync (run id **16**): `status=ok`, patch **7.41f** (id 190),
-  `rows_meta=6858`, 54 среза, `rows_matchups=32512`, ошибок 0,
-  `week_start=2026-10-15`, `week_end=2026-10-21`.
+- Реальный sync (winDay-based): `status=ok`, patch **7.41f** (id 190),
+  `rows_meta=762` (127 героев × 6 позиций), 6 срезов, ошибок 0,
+  период `2026-10-10`.
 - Чтение через `anon`: патч `7.41f` (`is_current=true`), RPC
-  `vetmo_get_meta_report` 200, период — **`15.10 – 21.10.2026`**,
-  топ-1 по win rate — Techies (56.65%), Phantom Lancer — 55.53% при pick
-  12.35% и ban 41.16%.
+  `vetmo_get_meta_report` 200, Phantom Lancer WR 53.25% (было 55.53% на
+  stats, референс ~52-54%), pick 12.79%, ban 41.14%.
 - `dist/VETMO.exe` и `dist/VETMO-Admin.exe` пересобраны после изменений;
   пользовательский exe не содержит маркеров `service_role`, `stratz_sync`,
   `stratz_client`, `sync_settings`, `vetmo.admin`.

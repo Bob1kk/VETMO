@@ -6,6 +6,10 @@
 
 Приложение никогда не получает service_role: скрипт читает его из
 %APPDATA%/VETMO/secrets.env.
+
+Подход согласован с прошлым бета-релизом:winDay с фильтром
+gameModeIds=ALL_PICK_RANKED — данные совпадают с референсными сайтами
+(dotabuff, opendota), в отличие от stats (без фильтра по режиму игры).
 """
 
 from __future__ import annotations
@@ -14,8 +18,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
-from datetime import time as dt_time
+from datetime import UTC, datetime
 from typing import Any
 
 from vetmo.data.supabase_heroes import load_seed_heroes
@@ -25,7 +28,7 @@ from vetmo.infra.supabase_gateway import SupabaseGateway
 from vetmo.infra.sync_settings import SyncSettings
 from vetmo.services.stratz_aggregate import (
     _day_index,
-    aggregate_hero_stats_week,
+    aggregate_win_day,
     ban_rates_by_rank,
     ban_stats_rows,
     hero_rows,
@@ -36,25 +39,6 @@ from vetmo.services.stratz_aggregate import (
 from vetmo.services.stratz_client import StratzClient, StratzError
 
 logger = logging.getLogger("vetmo.sync")
-
-def _week_start_timestamp(now: datetime | None = None) -> int:
-    """Начало текущей недели STRATZ (четверг 00:00 UTC).
-
-    ``stats(week=...)`` и ``matchUp(week=...)`` принимают unix-время начала
-    недели. STRATZ группирует недели с четверга: 2026-10-15, 2026-10-08 и
-    т.д. Для среды 2026-10-21 это 2026-10-15.
-    """
-    moment = now or datetime.now(UTC)
-    day = moment.date()
-    days_since_thursday = (day.weekday() - 3) % 7
-    start = day - timedelta(days=days_since_thursday)
-    return int(datetime.combine(start, dt_time.min, tzinfo=UTC).timestamp())
-
-
-def _week_end_date(week_start: int) -> str:
-    """Последний календарный день недели STRATZ (среда) в ISO."""
-    end = datetime.fromtimestamp(week_start, UTC) + timedelta(days=6)
-    return end.date().isoformat()
 
 
 @dataclass
@@ -132,7 +116,7 @@ def sync_all(
     request_id: str | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> SyncStats:
-    """Выполняет полный sync reference-данных.
+    """Выполняет полный sync reference-данных через winDay (как в бета-релизе).
 
     ``should_stop`` опрашивается между срезами (ранги, позиции, брекеты
     матчапов). Отмена кооперативная: текущий запрос завершается, уже
@@ -189,8 +173,6 @@ def sync_all(
             run_id = int(run[0]["id"]) if run else None
 
         # --- banDay: пер-геройные баны (один запрос на все срезы) ---
-        # Окно банов — последние 7 доступных дней banDay. Оно совпадает с
-        # текущей неделей stats (четверг–среда), а не с устаревшим winDay.
         ban_rates: dict[int, dict[int, float]] = {}
         ban_deltas: dict[int, dict[int, float]] = {}
         if not stop_requested():
@@ -224,83 +206,72 @@ def sync_all(
                     f"ban_day: {type(exc).__name__}: {exc}")
                 progress(f"  ОШИБКА ban_day: {type(exc).__name__}: {exc}")
 
-        # --- stats: свежая текущая неделя, позиции и группы рангов ---
-        # winDay в октябре 2026 заканчивался 2026-10-10, а stats отдаёт
-        # текущую неделю (2026-10-15…21) и сразу позиции + ранги.
-        week_start = _week_start_timestamp()
-        week_end = _week_end_date(week_start)
-        snapshot_date = min(
-            datetime.now(UTC).date().isoformat(), week_end,
-        )
-        stats_current: list[dict[str, Any]] = []
-        stats_previous: list[dict[str, Any]] = []
-        if not stop_requested():
+        # --- winDay: мета по дням, фильтр ALL_PICK_RANKED (как в бета-релизе) ---
+        # winDay не поддерживает bracketIds (HTTP 400), поэтому загружаем
+        # только rank 0 (все ранги) для каждой позиции. Бан-рейт по рангам
+        # берётся из banDay (загружено выше).
+        all_rows_meta: list[dict[str, Any]] = []
+        slice_count = 0
+
+        for position in positions:
+            if stop_requested():
+                break
             try:
-                stats_current = client.hero_stats_week(week_start)
-                progress(
-                    f"  stats неделя {snapshot_date}: {len(stats_current)} строк"
+                win_rows = client.win_day(
+                    position=position if position > 0 else None,
+                    take=3000,
                 )
+                progress(f"  winDay pos={position}: {len(win_rows)} строк")
             except Exception as exc:  # noqa: BLE001
                 stats.errors.append(
-                    f"stats current: {type(exc).__name__}: {exc}")
-                progress(
-                    f"  ОШИБКА stats current: {type(exc).__name__}: {exc}"
-                )
-        if stats_current and not stop_requested():
-            try:
-                stats_previous = client.hero_stats_week(
-                    week_start - 7 * 86400,
-                )
-            except Exception as exc:  # noqa: BLE001 - дельты не критичны
-                progress(
-                    f"  предупреждение stats previous: {type(exc).__name__}: {exc}"
-                )
+                    f"winDay pos={position}: {type(exc).__name__}: {exc}")
+                progress(f"  ОШИБКА winDay pos={position}: "
+                         f"{type(exc).__name__}: {exc}")
+                continue
 
-        if stats_current:
-            rows = aggregate_hero_stats_week(
-                stats_current,
+            rows_meta, snapshot_date = aggregate_win_day(
+                win_rows,
                 patch_id=current_id,
-                ranks=ranks,
-                positions=positions,
-                previous_rows=stats_previous,
-                ban_rates=ban_rates,
-                ban_deltas=ban_deltas,
+                rank_tier=0,
+                position=position,
+                ban_rates=ban_rates.get(0) if ban_rates else None,
+                ban_deltas=ban_deltas.get(0) if ban_deltas else None,
+                ban_scope="ALL",
             )
-            stats.slices = len({
-                (row["rank_tier"], row["position"]) for row in rows
-            })
-            stats.rows_meta = len(rows)
-            stats.period = snapshot_date
-            if gateway is not None and rows:
-                by_rank: dict[int, list[dict[str, Any]]] = {}
-                for row in rows:
-                    by_rank.setdefault(int(row["rank_tier"]), []).append(row)
-                for rank, rank_rows in sorted(by_rank.items()):
-                    try:
-                        _upsert(
-                            gateway, "vetmo_meta", rank_rows,
-                            "patch_id,hero_id,rank_tier,position,game_mode,window_days",
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        stats.errors.append(
-                            f"rank={rank} meta: {type(exc).__name__}: {exc}")
-                    try:
-                        _upsert(
-                            gateway, "vetmo_snapshots",
-                            snapshot_rows(rank_rows, snapshot_date),
-                            "snapshot_date,patch_id,hero_id,rank_tier,position,game_mode,window_days",
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        stats.errors.append(
-                            f"rank={rank} snapshot: {type(exc).__name__}: {exc}")
-            progress(
-                f"  мета: {len(rows)} строк, {stats.slices} срезов, "
-                f"период до {snapshot_date}"
-            )
-        elif not stats.errors:
-            stats.errors.append("stats: текущая неделя пуста")
+            all_rows_meta.extend(rows_meta)
+            slice_count += 1
+            if snapshot_date:
+                stats.period = snapshot_date
 
-        # --- matchUp: матчапы за ту же текущую неделю ---
+            # Снимки — только для текущей позиции (rank 0).
+            if gateway is not None and rows_meta and snapshot_date:
+                try:
+                    _upsert(
+                        gateway, "vetmo_meta", rows_meta,
+                        "patch_id,hero_id,rank_tier,position,game_mode,window_days",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    stats.errors.append(
+                        f"pos={position} meta: {type(exc).__name__}: {exc}")
+                try:
+                    _upsert(
+                        gateway, "vetmo_snapshots",
+                        snapshot_rows(rows_meta, snapshot_date),
+                        "snapshot_date,patch_id,hero_id,rank_tier,position,game_mode,window_days",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    stats.errors.append(
+                        f"pos={position} snapshot: {type(exc).__name__}: {exc}")
+
+            stats.rows_meta = len(all_rows_meta)
+            stats.slices = slice_count
+            time.sleep(0.1)
+
+            if not rows_meta:
+                stats.errors.append(
+                    f"winDay pos={position}: пустой результат")
+
+        # --- matchUp: матчапы за текущую неделю ---
         if include_matchups and not stop_requested():
             hero_ids = [hero.id for hero in load_seed_heroes()]
             specs: list[tuple[str, str | None]] = [(ALL_BRACKET, None)]
@@ -312,7 +283,7 @@ def sync_all(
                     break
                 try:
                     groups = client.matchup_groups(
-                        hero_ids, take=300, week=week_start, bracket=bracket,
+                        hero_ids, take=300, bracket=bracket,
                     )
                     bracket_rows: list[dict[str, Any]] = []
                     for hero_id in hero_ids:
@@ -338,13 +309,9 @@ def sync_all(
 
             stats.rows_matchups = len(fetched)
             if gateway is not None and cancelled:
-                # Частичные матчапы писать нельзя: delete+upsert заменил бы
-                # прошлый полный срез неполным.
                 stats.errors.append("matchups: запись пропущена из-за отмены")
             elif gateway is not None and fetched and not failed_brackets:
                 try:
-                    # Полная замена матчапов патча: старые top-10 не должны
-                    # оставаться, если герой выпал из десятки после обновления.
                     gateway.delete(
                         "vetmo_hero_matchups", {"patch_id": int(current_id)},
                     )
@@ -381,11 +348,7 @@ def sync_all(
                     "details": {
                         "slices": stats.slices,
                         "period_end": stats.period,
-                        "week_start": datetime.fromtimestamp(
-                            week_start, UTC,
-                        ).date().isoformat(),
-                        "week_end": week_end,
-                        "source": "stats+banDay+matchUp",
+                        "source": "winDay+banDay+matchUp",
                         "cancelled": cancelled,
                         "errors": stats.errors[:20],
                         **_trace_details(trigger, request_id),
