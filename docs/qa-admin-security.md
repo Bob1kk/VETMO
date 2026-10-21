@@ -11,10 +11,10 @@
 
 | Проверка | Результат | Команда |
 |---|---|---|
-| Полный прогон тестов | **192 passed** за 16.42 s, 0 failed, 0 skipped | `.\.venv\Scripts\python.exe -m pytest` |
-| Тесты Admin (`tests/admin/`) | **38 passed** за 1.54 s | `.\.venv\Scripts\python.exe -m pytest tests/admin -v --no-header` |
-| Ruff (admin + новые тесты) | **All checks passed** | `.\.venv\Scripts\python.exe -m ruff check tests/admin src/vetmo/admin` |
-| Mypy (admin + тесты) | 10 ошибок, все в ранее существовавших `test_ui_smoke.py` / `test_workers.py`; новые тесты ошибок не добавили | `.\.venv\Scripts\python.exe -m mypy src/vetmo/admin tests/admin` |
+| Полный прогон тестов | **206 passed**, 0 failed, 0 skipped | `.\.venv\Scripts\python.exe -m pytest` |
+| Тесты Admin (`tests/admin/`) | **44 passed** | `.\.venv\Scripts\python.exe -m pytest tests/admin -v --no-header` |
+| Ruff (src + tests) | **All checks passed** | `.\.venv\Scripts\python.exe -m ruff check src tests` |
+| Mypy (src + admin-тесты) | **Success: no issues found in 91 source files** | `.\.venv\Scripts\python.exe -m mypy src tests/admin` |
 | Секреты в отслеживаемых файлах | значений не найдено | `git grep` (см. §3) |
 | `.gitignore` | секретные файлы игнорируются | `git check-ignore -v ...` |
 | RLS Supabase | SELECT разрешён, INSERT для `anon` запрещён (401) | §4 |
@@ -180,3 +180,69 @@ git check-ignore -v api.txt n8n_api_key.txt foo.n8n.key n8n/.secrets .env secret
 
 RLS-пробник запускался отдельным временным скриптом (не коммитится), ключи
 читались из `.env` и не выводились.
+
+---
+
+## 9. Финальная проверка после T-114
+
+**Дата:** 2026-10-21, ветка `beta2`, коммит `56a903b`.
+
+- `pytest` — **198 passed**.
+- `tests/admin` — **44 passed** (workers, UI smoke, context, repository, security, sync schema).
+- `ruff check src tests` — чисто.
+- `mypy src tests/admin` — чисто, 91 файл.
+- `VETMO.exe` пересобран после `dc050ae`; маркеры `service_role`, `stratz_sync`,
+  `stratz_client`, `VETMO_SYNC_SERVICE_KEY`, `vetmo.admin` отсутствуют.
+- `VETMO-Admin.exe` пересобран; `vetmo.admin` и `vetmo.services.stratz_sync`
+  присутствуют, значения секретов из `%APPDATA%\VETMO\secrets.env` — нет.
+- Реальный meta-sync через `SyncRunner` (как из Admin-окна):
+  - run id **14**, `status=ok`, patch **7.41f** (id 190);
+  - `rows_meta=6858`, 54 среза, `rows_matchups=0`, ошибок 0;
+  - `trigger_source=admin-app` и `request_id` сохранены в `details`.
+- Удалённая схема `vetmo_sync_runs` пока без колонок `trigger_source`/`request_id`;
+  код пишет трассировку в `details` и автоматически использует колонки после
+  применения миграции `20261021_003`. Синхронизация от этого не падает.
+- RLS перепроверена: `anon` SELECT — 200, POST — 401 (`42501`).
+
+---
+
+## 10. Свежая мета: `stats` вместо `winDay`
+
+**Дата:** 2026-10-21.
+
+### Причина
+
+`winDay` на 2026-10-21 отдавал только 17 дней с разрывом и максимум
+`2026-10-10` (см. `docs/stratz-actual-schema-notes.md`). Приложение показывало
+мету недельной давности. `winWeek` заканчивался `2026-10-01`, `winMonth` —
+августом, `winHour` — последними ~30 часами.
+
+### Решение
+
+- Новый источник — `stats(week)` STRATZ: `week` принимает unix-время начала
+  недели (четверг). Текущая неделя — `2026-10-15…21`.
+- Запрос `groupByPosition: true` + `groupByBracket: true` даёт 3175 строк =
+  127 героев × 5 позиций × 5 групп (`UNCALIBRATED` + 4 калиброванные).
+- Агрегация собирает 54 среза rank 0..8 × position 0..5; ранги 1/2, 3/4, 5/6,
+  7/8 складываются в 4 группы, rank 0 — все группы.
+- Дельты win/pick — к предыдущей неделе; баны — `banDay` за 7 дней;
+  матчапы — `matchUp` текущей недели.
+
+### Проверки
+
+- `pytest` — **206 passed** (добавлены тесты `aggregate_hero_stats_week`:
+  позиции, ранги 0/1/8, `pick_share`, дельты, баны, популярность, мусорные
+  строки; недельное окно `_week_start_timestamp`/`_week_end_date`).
+- `ruff check src tests` — чисто; `mypy src tests/admin` — чисто (91 файл).
+- Live-агрегация: 6858 строк, 54 среза; rank 0 position 0 — 127 героев,
+  сумма pick rate ≈ 1000%, каждая позиция ≈ 100%.
+- Реальный полный sync (run id **16**): `status=ok`, patch **7.41f** (id 190),
+  `rows_meta=6858`, 54 среза, `rows_matchups=32512`, ошибок 0,
+  `week_start=2026-10-15`, `week_end=2026-10-21`.
+- Чтение через `anon`: патч `7.41f` (`is_current=true`), RPC
+  `vetmo_get_meta_report` 200, период — **`15.10 – 21.10.2026`**,
+  топ-1 по win rate — Techies (56.65%), Phantom Lancer — 55.53% при pick
+  12.35% и ban 41.16%.
+- `dist/VETMO.exe` и `dist/VETMO-Admin.exe` пересобраны после изменений;
+  пользовательский exe не содержит маркеров `service_role`, `stratz_sync`,
+  `stratz_client`, `sync_settings`, `vetmo.admin`.

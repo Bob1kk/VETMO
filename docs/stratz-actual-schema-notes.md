@@ -1,4 +1,4 @@
-# STRATZ: фактические наблюдения по API (2026-10-20)
+# STRATZ: фактические наблюдения по API (2026-10-21)
 
 Это не опубликованная схема, а результаты live-introspection и пробных запросов.
 Токен и значения секретов здесь отсутствуют.
@@ -18,18 +18,27 @@
 - `winDay(heroIds, take, skip, bracketIds: [RankBracket], positionIds: [MatchPlayerPositionType], regionIds, gameModeIds, groupBy)`
   - `HeroWinDayType { day: Long, heroId, winCount, matchCount }`
   - `day` — epoch seconds.
-  - В пробе `take: 3000`, `ALL_PICK` вернулось 2159 строк = 127 героев × 17 дней.
-  - Диапазон в пробе: **2026-09-11 … 2026-10-10**, то есть данные могут отставать
-    от календарной даты. В UI нельзя писать «сегодня»; показывать фактический период.
+  - **На 2026-10-21 `winDay` отдаёт только 17 дней: 2026-09-11…17 и
+    2026-10-01…10.** Пропуск 2026-09-18…30 и отставание от календаря на
+    11 дней. `take=10000` и `skip` этот разрыв не исправляют.
+  - `winDay` больше не используется как источник свежей меты.
 - `winWeek`, `winMonth`, `winGameVersion`, `winHour` — аналогичные агрегаты.
+  - `winWeek` заканчивается неделей `2026-10-01`.
+  - `winMonth` — августом 2026.
+  - `winHour` — только последние ~30 часов.
+  - Для недельной меты не подходят.
 - `stats(heroIds, week, bracketBasicIds: [RankBracketBasicEnum], positionIds, groupByTime, groupByPosition, groupByBracket, minTime, maxTime)`
   - `HeroPositionTimeDetailType { heroId, week, time, position, bracketBasicIds, matchCount, remainingMatchCount, winCount, ... }`
-  - `groupByPosition: true` даёт разбивку по позициям.
-  - `groupByBracket: true` даёт 5 групп: `UNCALIBRATED`, `HERALD_GUARDIAN`,
-    `CRUSADER_ARCHON`, `LEGEND_ANCIENT`, `DIVINE_IMMORTAL`.
-  - `bracketBasicIds: [HERALD_GUARDIAN]` + `groupByPosition` даёт позиции внутри группы.
-  - `bracketBasicIds: [ALL]` для `stats` вернул пустой список; не использовать `ALL` здесь.
-  - `week` — номер недели (в пробе 2963); `time` — длительность/бакет, не дата.
+  - **`week` — unix-время начала недели, а не номер недели.** Недели STRATZ
+    начинаются в четверг. `week=1792022400` — неделя `2026-10-15…21`.
+  - `groupByPosition: true` + `groupByBracket: true` даёт 3175 строк =
+    127 героев × 5 позиций × 5 групп.
+  - Группы: `UNCALIBRATED`, `HERALD_GUARDIAN`, `CRUSADER_ARCHON`,
+    `LEGEND_ANCIENT`, `DIVINE_IMMORTAL`.
+  - `bracketBasicIds: [ALL]` для `stats` возвращает пустой список; не использовать `ALL`.
+  - Позиции приходят как `POSITION_1`…`POSITION_5`.
+  - Суммы сходятся: по каждой позиции pick rate героев ≈ 100%, по всем
+    позициям (position=0) ≈ 1000% — в матче 10 слотов героев.
 - `matchUp(heroId, heroIds, week, bracketBasicIds: [RankBracketBasicEnum], orderBy, matchLimit, skip, take)`
   - `bracketBasicIds: [ALL]` даёт пустой ответ.
   - Без `bracketBasicIds` возвращает данные.
@@ -38,43 +47,51 @@
   - `vs: [HeroStatsHeroDryadType { heroId1, heroId2, week, matchCount, winCount, winsAverage, winRateHeroId1, winRateHeroId2, ... }]`
   - `count` в `vs` отсутствует; использовать `matchCount`.
   - `winsAverage` — доля 0..1; `winRateHeroId1` — общий WR героя, не матчапа.
+  - На 2026-10-21 `matchUp` содержит текущую неделю с `2026-10-15`.
 - `heroVsHeroMatchup(heroId, week, bracketBasicIds, matchLimit, skip, take)` → `HeroMatchupType`
   - `advantage`/`disadvantage` в пробе с `[ALL]` были пустыми; проверять без `[ALL]`.
 - `banDay(heroId: Short!, day: Int, bracketBasicIds: [RankBracketBasicEnum], take, skip, groupByDay, groupByRank)`
   - `HeroBanType { heroId, day, bracketBasicIds, matchCount, winCount }`
   - `day` — номер дня (например 20741), не epoch seconds.
+  - На 2026-10-21 `banDay` свежий: есть данные по `2026-10-21`.
   - В пробе `heroId: 44` вернул строки с **другими** heroId, то есть семантика
-    аргумента неочевидна. Нужна отдельная проверка:
-    1. запросить `banDay` для конкретного `day`;
-    2. сравнить `Σ matchCount` с общим числом матчей за день;
-    3. проверить, что для одного героя `matchCount` похож на ban count.
-  - Если семантика не подтверждается — ban rate暫時 `null` (честное «—»), пока
-    не найдём надёжный источник. Не подставлять pro-баны.
+    аргумента неочевидна; sync читает общий срез `banDay` без фильтра по герою
+    и агрегирует по `heroId`.
 - `ratings` и `metaTrend` в фактическом API **отсутствуют**, хотя были в npm-схеме.
   Не использовать их.
 
 ## Практические выводы
 
-- Для win/pick по точным рангам + позициям: `winDay`, последние 7 доступных дней.
-- Для позиций и групп рангов: `stats` с `groupByPosition`/`groupByBracket`; это,
-  похоже, более свежий недельный агрегат.
-- Для дельт:
-  - exact rank/position: сравнить два окна `winDay` (7 дней) или `stats` по неделям;
-  - all-rank: `stats` текущая/предыдущая неделя;
-  - если данных нет — `null`, не выдумывать.
-- Для банов: сначала проверить `banDay`; при неубедительности — `null`.
-- Для контрпиков: `matchUp` без `bracketBasicIds: [ALL]` и без `matchLimit`.
-- `winGameVersion` в пробе вернул 18 426 строк, но только patch id до 181
-  (7.40); текущие 182–190 отсутствовали. Не считать, что история патчей полная;
-  проверять и, если нужно, строить историю из `stats`/`winWeek`.
-- `constants.heroes` — 127 героев, `roles` — строки (`CARRY`, `ESCAPE`, `NUKER` ...),
-  `stats.primaryAttribute` — `agi`/`str`/`int`/`all`, `stats.attackType` — `Melee`/`Ranged`.
-- `constants.gameVersions` — 189 версий, последняя `7.41f` (id 190).
+- **Свежая мета:** `stats` текущей недели (`week` = unix-время четверга).
+  Для дельт — та же `stats` за предыдущую неделю.
+- **Позиции и ранги:** один запрос `stats` с `groupByPosition` +
+  `groupByBracket`; ранг 0 суммирует все 5 групп, ранги 1/2 → `HERALD_GUARDIAN`,
+  3/4 → `CRUSADER_ARCHON`, 5/6 → `LEGEND_ANCIENT`, 7/8 → `DIVINE_IMMORTAL`.
+- **Баны:** `banDay` за последние 7 дней; ban rate = баны / (10 × матчи)
+  в рамках ранговой группы.
+- **Контрпики:** `matchUp` за текущую неделю, без `bracketBasicIds: [ALL]` и
+  без `matchLimit`.
+- **Патчи:** `constants.gameVersions` — 189 версий, последняя `7.41f` (id 190).
+  `winGameVersion` исторически неполный; не считать его источником патчей.
+- **`window_days` в БД:** схема разрешает только `0` или `7`. Для свежей
+  недели используется `7`, а фактическая дата конца — `snapshot_date`
+  (например `2026-10-21`).
 
-## Что должен сделать api-agent
+## Что уже сделано
 
-1. Добить семантику `banDay` на 2–3 героях и сохранить вывод в этом файле.
-2. Определить, какой источник даёт актуальные 7 дней: `winDay` (лаг) vs `stats`
-   (неделя). Зафиксировать в `docs/stratz-validation.md`.
-3. Снять фикстуры реальных ответов в `tests/fixtures/stratz/`.
-4. Не печатать токен; не коммитить `.env`, `pop.txt`, `%APPDATA%/VETMO/secrets.env`.
+1. `StratzClient.hero_stats_week(week)` — GraphQL-запрос `stats` с
+   `groupByPosition`/`groupByBracket`.
+2. `aggregate_hero_stats_week()` — 54 среза rank 0..8 × position 0..5,
+   pick share, дельты, баны, флаг популярности.
+3. `sync_all()` — свежие баны, `stats` текущей/предыдущей недели, матчапы
+   текущей недели, snapshot на дату конца недели.
+4. Live-sync 2026-10-21: patch `7.41f`, 6858 строк меты, 54 среза,
+   32512 строк матчапов, период `15.10 – 21.10.2026`.
+
+## Ограничения
+
+- STRATZ не публикует полную документацию по составу `stats`/`banDay`
+  (кастомы, ремейки, точный фильтр «нормальных игр»). Семантика проверена
+  косвенно: суммы позиций и рангов сходятся с числом матчей.
+- Не печатать токен; не коммитить `.env`, `pop.txt`,
+  `%APPDATA%/VETMO/secrets.env`.

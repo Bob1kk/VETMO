@@ -73,6 +73,24 @@ query(
 }
 """
 
+HERO_STATS_WEEK_QUERY = """
+query($week: Long, $groupByPosition: Boolean, $groupByBracket: Boolean) {
+  heroStats {
+    stats(
+      week: $week
+      groupByPosition: $groupByPosition
+      groupByBracket: $groupByBracket
+    ) {
+      heroId
+      position
+      bracketBasicIds
+      matchCount
+      winCount
+    }
+  }
+}
+"""
+
 BAN_DAY_QUERY = """
 query($heroId: Short!, $take: Int, $groupByDay: Boolean, $groupByRank: Boolean) {
   heroStats {
@@ -153,6 +171,30 @@ class StratzClient:
             variables["positionIds"] = [f"POSITION_{int(position)}"]
         data = self.execute(WIN_DAY_QUERY, variables)
         rows = ((data.get("heroStats") or {}).get("winDay")) or []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def hero_stats_week(
+        self,
+        week: int,
+        *,
+        group_by_position: bool = True,
+        group_by_bracket: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Свежая недельная статистика ``stats`` с позициями и рангами.
+
+        ``week`` — unix-время начала недели (четверг 00:00 UTC). В отличие
+        от ``winDay``, который в октябре 2026 отставал на 10 дней, ``stats``
+        отдаёт текущую неделю и поддерживает ``groupByPosition`` /
+        ``groupByBracket``. Один запрос с обоими флагами возвращает
+        127 героев × 5 позиций × 5 ранговых групп.
+        """
+        variables: dict[str, Any] = {
+            "week": int(week),
+            "groupByPosition": bool(group_by_position),
+            "groupByBracket": bool(group_by_bracket),
+        }
+        data = self.execute(HERO_STATS_WEEK_QUERY, variables)
+        rows = ((data.get("heroStats") or {}).get("stats")) or []
         return [row for row in rows if isinstance(row, dict)]
 
     def game_versions(self) -> list[dict[str, Any]]:

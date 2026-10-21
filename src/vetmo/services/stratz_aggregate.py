@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from vetmo.domain.models import Hero
-from vetmo.domain.rank_brackets import BASIC_BRACKET_BY_RANK
+from vetmo.domain.rank_brackets import BASIC_BRACKET_BY_RANK, BASIC_BRACKETS
 
 
 def _num(value: object) -> float:
@@ -229,6 +229,224 @@ def aggregate_win_day(
             "source": "stratz",
         })
     return result, snapshot_date
+
+
+# ``stats`` отдаёт 5 групп: 4 калиброванные + UNCALIBRATED. Для ранга 0
+# суммируем все группы, для 1..8 используем BASIC_BRACKET_BY_RANK.
+STATS_BRACKETS: tuple[str, ...] = ("UNCALIBRATED", *BASIC_BRACKETS)
+
+
+def _stats_position(value: object) -> int | None:
+    """``POSITION_1``/1 -> 1..5."""
+    if isinstance(value, str) and value.startswith("POSITION_"):
+        raw: object = value.removeprefix("POSITION_")
+    else:
+        raw = value
+    try:
+        position = int(raw)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
+    return position if 1 <= position <= 5 else None
+
+
+def _stats_bracket(value: object) -> str | None:
+    text = str(value or "")
+    return text if text in STATS_BRACKETS else None
+
+
+def _stats_by_key(
+    rows: list[dict[str, Any]],
+) -> dict[tuple[str, int, int], tuple[int, int]]:
+    """Нормализует строки ``stats``: (bracket, position, hero) -> (matches, wins)."""
+    grouped: dict[tuple[str, int, int], list[int]] = {}
+    for row in rows:
+        bracket = _stats_bracket(row.get("bracketBasicIds"))
+        position = _stats_position(row.get("position"))
+        try:
+            hero_id = int(row["heroId"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if bracket is None or position is None or hero_id <= 0:
+            continue
+        matches = int(_num(row.get("matchCount")))
+        wins = int(_num(row.get("winCount")))
+        if matches <= 0:
+            continue
+        key = (bracket, position, hero_id)
+        bucket = grouped.setdefault(key, [0, 0])
+        bucket[0] += matches
+        bucket[1] += wins
+    return {key: (value[0], value[1]) for key, value in grouped.items()}
+
+
+def _stats_totals(
+    grouped: dict[tuple[str, int, int], tuple[int, int]],
+    *,
+    brackets: tuple[str, ...],
+    positions: tuple[int, ...],
+) -> tuple[dict[int, tuple[int, int]], int]:
+    """Сумма по выбранным группам/позициям + общее число матчей среза."""
+    totals: dict[int, list[int]] = {}
+    for (bracket, position, hero_id), (matches, wins) in grouped.items():
+        if bracket not in brackets or position not in positions:
+            continue
+        bucket = totals.setdefault(hero_id, [0, 0])
+        bucket[0] += matches
+        bucket[1] += wins
+    total_matches = sum(value[0] for value in totals.values())
+    return {hero_id: (value[0], value[1]) for hero_id, value in totals.items()}, total_matches
+
+
+def _rank_position_map(
+    rows: list[dict[str, Any]],
+    *,
+    ranks: range,
+    positions: range,
+) -> dict[tuple[int, int, int], dict[str, float | None]]:
+    """(rank, position, hero) -> метрики из ``stats``.
+
+    ``position=0`` — сумма по всем позициям, матчи делятся на 10 слотов.
+    ``position>0`` — один слот, матчи делятся на число героев позиции.
+    """
+    grouped = _stats_by_key(rows)
+    result: dict[tuple[int, int, int], dict[str, float | None]] = {}
+    pos_numbers = tuple(position for position in positions if 1 <= position <= 5)
+
+    for rank in ranks:
+        if rank == 0:
+            brackets = STATS_BRACKETS
+        else:
+            bracket = BASIC_BRACKET_BY_RANK.get(rank)
+            if bracket is None:
+                continue
+            brackets = (bracket,)
+
+        if 0 in positions:
+            totals, total_hero_matches = _stats_totals(
+                grouped, brackets=brackets, positions=pos_numbers,
+            )
+            total_matches = max(1.0, total_hero_matches / 10.0)
+            for hero_id, (matches, wins) in totals.items():
+                result[(rank, 0, hero_id)] = {
+                    "matches": matches,
+                    "wins": wins,
+                    "win_rate": wins / matches * 100.0,
+                    "pick_rate": matches / total_matches * 100.0,
+                    "pick_share": None,
+                }
+
+        if not pos_numbers:
+            continue
+        hero_totals, _ = _stats_totals(
+            grouped, brackets=brackets, positions=pos_numbers,
+        )
+        for position in pos_numbers:
+            totals, total_matches = _stats_totals(
+                grouped, brackets=brackets, positions=(position,),
+            )
+            if total_matches <= 0:
+                continue
+            for hero_id, (matches, wins) in totals.items():
+                hero_matches = hero_totals.get(hero_id, (0, 0))[0]
+                pick_share = (
+                    matches / hero_matches * 100.0
+                    if hero_matches > 0 else None
+                )
+                result[(rank, position, hero_id)] = {
+                    "matches": matches,
+                    "wins": wins,
+                    "win_rate": wins / matches * 100.0,
+                    "pick_rate": matches / total_matches * 100.0,
+                    "pick_share": pick_share,
+                }
+    return result
+
+
+def aggregate_hero_stats_week(
+    rows: list[dict[str, Any]],
+    *,
+    patch_id: int,
+    ranks: range = range(0, 9),
+    positions: range = range(0, 6),
+    previous_rows: list[dict[str, Any]] | None = None,
+    window_days: int = 7,
+    ban_rates: dict[int, dict[int, float]] | None = None,
+    ban_deltas: dict[int, dict[int, float]] | None = None,
+    min_matches_for_display: int = 50,
+    min_popular_share: float = 25.0,
+    min_popular_matches: int = 500,
+) -> list[dict[str, Any]]:
+    """Свежая мета из ``stats``: текущая неделя, позиции и группы рангов.
+
+    ``stats`` поддерживает ``groupByPosition``/``groupByBracket`` и отдаёт
+    текущую неделю, в отличие от ``winDay`` (в октябре 2026 отставал на
+    10 дней). Один ответ содержит 127×5×5 строк, из которых собираются
+    срезы rank 0..8 × position 0..5.
+    """
+    if not rows:
+        return []
+    current = _rank_position_map(rows, ranks=ranks, positions=positions)
+    previous = _rank_position_map(
+        previous_rows or [], ranks=ranks, positions=positions,
+    )
+
+    result: list[dict[str, Any]] = []
+    for key in sorted(current):
+        rank, position, hero_id = key
+        stats = current[key]
+        matches = int(stats["matches"] or 0)
+        wins = int(stats["wins"] or 0)
+        if matches <= 0:
+            continue
+        win_rate = float(stats["win_rate"] or 0.0)
+        pick_rate = float(stats["pick_rate"] or 0.0)
+        pick_share = stats.get("pick_share")
+        if pick_share is not None:
+            pick_share = float(pick_share)
+
+        prev = previous.get(key)
+        delta_win = None
+        delta_pick = None
+        if prev is not None and int(prev["matches"] or 0) > 0:
+            delta_win = _round2(win_rate - float(prev["win_rate"] or 0.0))
+            delta_pick = _round2(pick_rate - float(prev["pick_rate"] or 0.0))
+
+        rank_bans = ban_rates.get(rank) if ban_rates is not None else None
+        rank_ban_deltas = ban_deltas.get(rank) if ban_deltas is not None else None
+        ban_rate = None if rank_bans is None else rank_bans.get(hero_id, 0.0)
+        delta_ban = None
+        if ban_rate is not None and rank_ban_deltas:
+            previous_ban = rank_ban_deltas.get(hero_id)
+            if previous_ban is not None:
+                delta_ban = _round2(ban_rate - previous_ban)
+
+        is_popular = (
+            position > 0
+            and (pick_share or 0.0) >= min_popular_share
+            and matches >= min_popular_matches
+        )
+        result.append({
+            "patch_id": int(patch_id),
+            "hero_id": int(hero_id),
+            "rank_tier": int(rank),
+            "position": int(position),
+            "game_mode": "ALL_PICK_RANKED",
+            "window_days": int(window_days),
+            "match_count": int(matches),
+            "win_count": int(wins),
+            "win_rate": round(win_rate, 2),
+            "pick_rate": round(pick_rate, 2),
+            "ban_rate": _round2(ban_rate),
+            "pick_share": _round2(pick_share),
+            "is_popular": bool(is_popular),
+            "sample_reliable": matches >= min_matches_for_display,
+            "delta_win": delta_win,
+            "delta_pick": delta_pick,
+            "delta_ban": delta_ban,
+            "ban_scope": ban_scope_for_rank(rank),
+            "source": "stratz",
+        })
+    return result
 
 
 def snapshot_rows(
@@ -658,6 +876,8 @@ __all__ = [
     "MATCHUP_HIGHLIGHTS_LIMIT",
     "MATCHUP_MIN_MATCHES",
     "MATCHUP_RELIABLE_MIN",
+    "STATS_BRACKETS",
+    "aggregate_hero_stats_week",
     "aggregate_win_day",
     "ban_rates_by_rank",
     "ban_scope_for_rank",

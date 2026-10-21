@@ -14,7 +14,8 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
 from typing import Any
 
 from vetmo.data.supabase_heroes import load_seed_heroes
@@ -24,48 +25,36 @@ from vetmo.infra.supabase_gateway import SupabaseGateway
 from vetmo.infra.sync_settings import SyncSettings
 from vetmo.services.stratz_aggregate import (
     _day_index,
-    aggregate_win_day,
+    aggregate_hero_stats_week,
     ban_rates_by_rank,
-    ban_scope_for_rank,
     ban_stats_rows,
     hero_rows,
     matchup_bracket_rows,
     patch_rows,
     snapshot_rows,
-    window_totals,
 )
 from vetmo.services.stratz_client import StratzClient, StratzError
 
 logger = logging.getLogger("vetmo.sync")
 
-RANK_BRACKETS: dict[int, str] = {
-    1: "HERALD",
-    2: "GUARDIAN",
-    3: "CRUSADER",
-    4: "ARCHON",
-    5: "LEGEND",
-    6: "ANCIENT",
-    7: "DIVINE",
-    8: "IMMORTAL",
-}
+def _week_start_timestamp(now: datetime | None = None) -> int:
+    """Начало текущей недели STRATZ (четверг 00:00 UTC).
 
-
-def _week_start_timestamp(period: str | None) -> int | None:
-    """Начало последней полной недели для ``matchUp(week:)``.
-
-    ``winDay`` заканчивается, например, 2026-10-10. STRATZ ``week`` —
-    unix-время начала недели; передаём 2026-10-04, чтобы получить
-    ровно те же 7 дней, что и мета (04.10–10.10), а не неполную/пустую
-    следующую неделю.
+    ``stats(week=...)`` и ``matchUp(week=...)`` принимают unix-время начала
+    недели. STRATZ группирует недели с четверга: 2026-10-15, 2026-10-08 и
+    т.д. Для среды 2026-10-21 это 2026-10-15.
     """
-    if not period:
-        return None
-    try:
-        end = datetime.fromisoformat(str(period)).replace(tzinfo=UTC)
-    except ValueError:
-        return None
-    end_day = int(end.timestamp() // 86400)
-    return max(0, end_day - 6) * 86400
+    moment = now or datetime.now(UTC)
+    day = moment.date()
+    days_since_thursday = (day.weekday() - 3) % 7
+    start = day - timedelta(days=days_since_thursday)
+    return int(datetime.combine(start, dt_time.min, tzinfo=UTC).timestamp())
+
+
+def _week_end_date(week_start: int) -> str:
+    """Последний календарный день недели STRATZ (среда) в ISO."""
+    end = datetime.fromtimestamp(week_start, UTC) + timedelta(days=6)
+    return end.date().isoformat()
 
 
 @dataclass
@@ -200,28 +189,25 @@ def sync_all(
             run_id = int(run[0]["id"]) if run else None
 
         # --- banDay: пер-геройные баны (один запрос на все срезы) ---
-        # Окно банов выравниваем по последнему дню winDay, чтобы карточка
-        # меты была согласована (WR и баны за один и тот же период).
+        # Окно банов — последние 7 доступных дней banDay. Оно совпадает с
+        # текущей неделей stats (четверг–среда), а не с устаревшим winDay.
         ban_rates: dict[int, dict[int, float]] = {}
         ban_deltas: dict[int, dict[int, float]] = {}
-        prefetched: dict[tuple[int, int], list[dict[str, Any]]] = {}
-        if gateway is not None and not stop_requested():
+        if not stop_requested():
             try:
-                preview = client.win_day(bracket=None, position=0)
-                prefetched[(0, 0)] = preview
-                preview_days = [
-                    day for day in (_day_index(row.get("day")) for row in preview)
+                ban_raw = client.ban_day(days=30)
+                ban_days = [
+                    day for day in (_day_index(row.get("day")) for row in ban_raw)
                     if day is not None
                 ]
-                end_day = max(preview_days) if preview_days else None
-                ban_raw = client.ban_day(days=30)
+                end_day = max(ban_days) if ban_days else None
                 ban_rates, ban_deltas = ban_rates_by_rank(
                     ban_raw, end_day=end_day,
                 )
                 diag = ban_stats_rows(
                     ban_raw, patch_id=current_id, end_day=end_day,
                 )
-                if diag:
+                if gateway is not None and diag:
                     try:
                         _upsert(
                             gateway, "vetmo_ban_stats", diag,
@@ -238,90 +224,85 @@ def sync_all(
                     f"ban_day: {type(exc).__name__}: {exc}")
                 progress(f"  ОШИБКА ban_day: {type(exc).__name__}: {exc}")
 
-        for rank in ranks:
-            if stop_requested():
-                break
-            bracket = RANK_BRACKETS.get(rank)
-            raw_by_position: dict[int, list[dict[str, Any]]] = {}
-            # Сначала позиции 1..5: их сумма нужна для доли героя на позиции.
-            for position in [p for p in positions if p != 0]:
-                if stop_requested():
-                    break
-                try:
-                    raw_by_position[position] = client.win_day(
-                        bracket=bracket, position=position,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    message = f"rank={rank} pos={position}: {type(exc).__name__}: {exc}"
-                    stats.errors.append(message)
-                    progress(f"  ОШИБКА {message}")
-                time.sleep(0.1)
-            totals: dict[int, int] = {}
-            for _raw in raw_by_position.values():
-                for hero_id, matches in window_totals(_raw).items():
-                    totals[hero_id] = totals.get(hero_id, 0) + matches
-            ordered_positions = [p for p in positions if p != 0]
-            if 0 in positions:
-                ordered_positions.append(0)
-            for position in ordered_positions:
-                if stop_requested():
-                    break
-                try:
-                    raw: list[dict[str, Any]] = (
-                        raw_by_position.get(position)
-                        or prefetched.get((rank, position))
-                        or []
-                    )
-                    if not raw:
-                        raw = client.win_day(bracket=bracket, position=position)
-                    assert isinstance(raw, list)
-                    rows, snapshot_date = aggregate_win_day(
-                        raw,
-                        patch_id=current_id,
-                        rank_tier=rank,
-                        position=position,
-                        hero_totals=totals if position > 0 else None,
-                        ban_rates=ban_rates.get(rank),
-                        ban_deltas=ban_deltas.get(rank),
-                        ban_scope=ban_scope_for_rank(rank),
-                    )
-                    stats.slices += 1
-                    if rows:
-                        stats.rows_meta += len(rows)
-                        if snapshot_date:
-                            stats.period = snapshot_date
-                        if gateway is not None and snapshot_date:
-                            try:
-                                _upsert(
-                                    gateway, "vetmo_meta", rows,
-                                    "patch_id,hero_id,rank_tier,position,game_mode,window_days",
-                                )
-                            except Exception as exc:  # noqa: BLE001
-                                stats.errors.append(
-                                    f"rank={rank} pos={position} meta: {type(exc).__name__}: {exc}")
-                            try:
-                                _upsert(
-                                    gateway, "vetmo_snapshots",
-                                    snapshot_rows(rows, snapshot_date),
-                                    "snapshot_date,patch_id,hero_id,rank_tier,position,game_mode,window_days",
-                                )
-                            except Exception as exc:  # noqa: BLE001 - кэш схемы может быть устаревшим
-                                stats.errors.append(
-                                    f"rank={rank} pos={position} snapshot: {type(exc).__name__}: {exc}")
-                    progress(
-                        f"  rank={rank} pos={position}: {len(rows)} строк"
-                        + (f", период до {snapshot_date}" if snapshot_date else "")
-                    )
-                except Exception as exc:  # noqa: BLE001 - один срез не рушит sync
-                    message = f"rank={rank} pos={position}: {type(exc).__name__}: {exc}"
-                    stats.errors.append(message)
-                    progress(f"  ОШИБКА {message}")
-                time.sleep(0.1)
+        # --- stats: свежая текущая неделя, позиции и группы рангов ---
+        # winDay в октябре 2026 заканчивался 2026-10-10, а stats отдаёт
+        # текущую неделю (2026-10-15…21) и сразу позиции + ранги.
+        week_start = _week_start_timestamp()
+        week_end = _week_end_date(week_start)
+        snapshot_date = min(
+            datetime.now(UTC).date().isoformat(), week_end,
+        )
+        stats_current: list[dict[str, Any]] = []
+        stats_previous: list[dict[str, Any]] = []
+        if not stop_requested():
+            try:
+                stats_current = client.hero_stats_week(week_start)
+                progress(
+                    f"  stats неделя {snapshot_date}: {len(stats_current)} строк"
+                )
+            except Exception as exc:  # noqa: BLE001
+                stats.errors.append(
+                    f"stats current: {type(exc).__name__}: {exc}")
+                progress(
+                    f"  ОШИБКА stats current: {type(exc).__name__}: {exc}"
+                )
+        if stats_current and not stop_requested():
+            try:
+                stats_previous = client.hero_stats_week(
+                    week_start - 7 * 86400,
+                )
+            except Exception as exc:  # noqa: BLE001 - дельты не критичны
+                progress(
+                    f"  предупреждение stats previous: {type(exc).__name__}: {exc}"
+                )
 
+        if stats_current:
+            rows = aggregate_hero_stats_week(
+                stats_current,
+                patch_id=current_id,
+                ranks=ranks,
+                positions=positions,
+                previous_rows=stats_previous,
+                ban_rates=ban_rates,
+                ban_deltas=ban_deltas,
+            )
+            stats.slices = len({
+                (row["rank_tier"], row["position"]) for row in rows
+            })
+            stats.rows_meta = len(rows)
+            stats.period = snapshot_date
+            if gateway is not None and rows:
+                by_rank: dict[int, list[dict[str, Any]]] = {}
+                for row in rows:
+                    by_rank.setdefault(int(row["rank_tier"]), []).append(row)
+                for rank, rank_rows in sorted(by_rank.items()):
+                    try:
+                        _upsert(
+                            gateway, "vetmo_meta", rank_rows,
+                            "patch_id,hero_id,rank_tier,position,game_mode,window_days",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        stats.errors.append(
+                            f"rank={rank} meta: {type(exc).__name__}: {exc}")
+                    try:
+                        _upsert(
+                            gateway, "vetmo_snapshots",
+                            snapshot_rows(rank_rows, snapshot_date),
+                            "snapshot_date,patch_id,hero_id,rank_tier,position,game_mode,window_days",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        stats.errors.append(
+                            f"rank={rank} snapshot: {type(exc).__name__}: {exc}")
+            progress(
+                f"  мета: {len(rows)} строк, {stats.slices} срезов, "
+                f"период до {snapshot_date}"
+            )
+        elif not stats.errors:
+            stats.errors.append("stats: текущая неделя пуста")
+
+        # --- matchUp: матчапы за ту же текущую неделю ---
         if include_matchups and not stop_requested():
-            heroes = load_seed_heroes()
-            hero_ids = [hero.id for hero in heroes]
-            week = _week_start_timestamp(stats.period)
+            hero_ids = [hero.id for hero in load_seed_heroes()]
             specs: list[tuple[str, str | None]] = [(ALL_BRACKET, None)]
             specs.extend((bracket, bracket) for bracket in BASIC_BRACKETS)
             fetched: list[dict[str, Any]] = []
@@ -331,7 +312,7 @@ def sync_all(
                     break
                 try:
                     groups = client.matchup_groups(
-                        hero_ids, take=300, week=week, bracket=bracket,
+                        hero_ids, take=300, week=week_start, bracket=bracket,
                     )
                     bracket_rows: list[dict[str, Any]] = []
                     for hero_id in hero_ids:
@@ -400,6 +381,11 @@ def sync_all(
                     "details": {
                         "slices": stats.slices,
                         "period_end": stats.period,
+                        "week_start": datetime.fromtimestamp(
+                            week_start, UTC,
+                        ).date().isoformat(),
+                        "week_end": week_end,
+                        "source": "stats+banDay+matchUp",
                         "cancelled": cancelled,
                         "errors": stats.errors[:20],
                         **_trace_details(trigger, request_id),
@@ -434,4 +420,4 @@ def sync_all(
         client.close()
 
 
-__all__ = ["RANK_BRACKETS", "SyncStats", "sync_all"]
+__all__ = ["SyncStats", "sync_all"]

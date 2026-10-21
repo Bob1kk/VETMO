@@ -1,7 +1,7 @@
 # План: VETMO Admin — локальная программа обновления БД
 
 **Дата:** 2026-10-21  
-**Статус:** утверждён пользователем  
+**Статус:** выполнен (2026-10-21)  
 **Ветка:** `beta2`  
 **Связанные документы:**
 - `docs/plans/2026-10-19-vetmo-spec.md` — базовая спека приложения
@@ -53,7 +53,7 @@
 ### Принципы
 - **Один источник записи:** только Admin-программа.
 - **Секреты не в git и не в exe:** `service_role` и STRATZ token — в `%APPDATA%\VETMO\secrets.env` (вне OneDrive).
-- **Пользовательский exe не содержит** модулей `vetmo.admin`, `stratz_client`, `stratz_sync`, `supabase_gateway` (service writer).
+- **Пользовательский exe не содержит** модулей `vetmo.admin`, `stratz_client`, `stratz_sync`, `sync_settings`. Общий `supabase_gateway` используется только с `anon`-ключом и не умеет писать reference-данные (RLS).
 - **RLS:** `anon` — только SELECT; `service_role` обходит RLS.
 - **Никаких внешних оркестраторов:** n8n/GitHub Actions не участвуют в обновлении.
 
@@ -139,7 +139,7 @@ src/vetmo/
 - Показывает HTTP-статус и время ответа.
 
 ### 5.6. История запусков
-- Таблица `vetmo_sync_runs`: дата, статус, trigger, patch, rows_meta, rows_matchups, ошибка.
+- Таблица `vetmo_sync_runs`: дата, статус, `trigger_source` (или `details.trigger_source`), patch, rows_meta, rows_matchups, ошибка.
 - Детали выбранного запуска: `details.slices`, `period_end`, `errors`.
 
 ### 5.7. Настройки
@@ -173,143 +173,143 @@ RLS-политики (уже в миграциях):
 - **Агент:** backend-agent
 - **Файлы:** ветка, `.github/workflows/stratz-sync.yml` (удалить), `tools/probe_stratz.py` (оставить)
 - **Шаги:**
-  - [ ] Создать `beta2` от `release/beta`.
-  - [ ] Merge `runner` в `beta2`.
-  - [ ] Удалить `.github/workflows/stratz-sync.yml` (GitHub Actions больше не нужен).
-  - [ ] Убедиться, что `tools/sync_stratz.py`, `src/vetmo/services/stratz_*.py`, `src/vetmo/infra/supabase_gateway.py`, `sync_settings.py` на месте.
-  - [ ] Коммит `chore(beta2): start admin app branch`.
+  - [x] Создать `beta2` от `release/beta`.
+  - [x] Merge `runner` в `beta2`.
+  - [x] Удалить `.github/workflows/stratz-sync.yml` (GitHub Actions больше не нужен).
+  - [x] Убедиться, что `tools/sync_stratz.py`, `src/vetmo/services/stratz_*.py`, `src/vetmo/infra/supabase_gateway.py`, `sync_settings.py` на месте.
+  - [x] Коммит `chore(beta2): start admin app branch`.
 - **Приёмка:** `git branch` содержит `beta2`; `python -m pytest` не сломан.
 
 ### T-102. Backend: AdminContext и SyncRunner
 - **Агент:** backend-agent
 - **Файлы:** `src/vetmo/admin/context.py`, `src/vetmo/admin/workers.py`
 - **Шаги:**
-  - [ ] `AdminContext`: `SyncSettings.load()`, `StratzClient`, `SupabaseGateway`, пути, версия.
-  - [ ] `SyncRunner(QThread)`: принимает режим (`meta`/`full`/`dry-run`), вызывает `sync_all()` с `progress`-callback, испускает сигналы `progress(str)`, `finished(dict)`, `failed(str)`.
-  - [ ] Флаг отмены: `cancel()`; `sync_all` проверяет его между срезами (добавить необязательный `should_stop`).
-  - [ ] Тесты: `tests/admin/test_workers.py` (мок `sync_all`).
+  - [x] `AdminContext`: `SyncSettings.load()`, `StratzClient`, `SupabaseGateway`, пути, версия.
+  - [x] `SyncRunner(QThread)`: принимает режим (`meta`/`full`/`dry-run`), вызывает `sync_all()` с `progress`-callback, испускает сигналы `progress(str)`, `finished(dict)`, `failed(str)`.
+  - [x] Флаг отмены: `cancel()`; `sync_all` проверяет его между срезами (добавить необязательный `should_stop`).
+  - [x] Тесты: `tests/admin/test_workers.py` (мок `sync_all`).
 - **Приёмка:** тесты проходят; UI может запускать sync без блокировки.
 
 ### T-103. GUI: каркас Admin-окна
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/main.py`, `window.py`, `tabs/__init__.py`
 - **Шаги:**
-  - [ ] `QApplication`, тема `theme_for`, название «VETMO Admin».
-  - [ ] Сайдбар: Обзор, Синхронизация, Мета, Матчапы, Сырые данные, История, Настройки.
-  - [ ] `QStackedWidget` с заглушками вкладок.
-  - [ ] Закрытие: корректно останавливать worker.
+  - [x] `QApplication`, тема `theme_for`, название «VETMO Admin».
+  - [x] Сайдбар: Обзор, Синхронизация, Мета, Матчапы, Сырые данные, История, Настройки.
+  - [x] `QStackedWidget` с заглушками вкладок.
+  - [x] Закрытие: корректно останавливать worker.
 - **Приёмка:** приложение запускается, вкладки переключаются.
 
 ### T-104. GUI: вкладка «Обзор»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/tabs/dashboard.py`
 - **Шаги:**
-  - [ ] Карточки: патч, последний run, rows_meta, rows_matchups, period_end.
-  - [ ] Кнопки запуска sync с подтверждением.
-  - [ ] Обновление данных после завершения sync.
+  - [x] Карточки: патч, последний run, rows_meta, rows_matchups, period_end.
+  - [x] Кнопки запуска sync с подтверждением.
+  - [x] Обновление данных после завершения sync.
 - **Приёмка:** данные читаются из Supabase, кнопки работают.
 
 ### T-105. GUI: вкладка «Синхронизация»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/tabs/sync_tab.py`
 - **Шаги:**
-  - [ ] Выбор режима, кнопка «Запустить», «Отменить».
-  - [ ] Прогресс-бар + лог.
-  - [ ] Сигналы от `SyncRunner`.
+  - [x] Выбор режима, кнопка «Запустить», «Отменить».
+  - [x] Прогресс-бар + лог.
+  - [x] Сигналы от `SyncRunner`.
 - **Приёмка:** sync запускается, лог обновляется, UI не зависает.
 
 ### T-106. GUI: вкладка «Мета»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/tabs/meta_tab.py`
 - **Шаги:**
-  - [ ] Фильтры: ранг, позиция, поиск.
-  - [ ] `QTableView` с моделью из `vetmo_meta`.
-  - [ ] Сортировка, подсветка winrate.
+  - [x] Фильтры: ранг, позиция, поиск.
+  - [x] `QTableView` с моделью из `vetmo_meta`.
+  - [x] Сортировка, подсветка winrate.
 - **Приёмка:** фильтры работают, данные соответствуют БД.
 
 ### T-107. GUI: вкладка «Матчапы»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/tabs/matchups_tab.py`
 - **Шаги:**
-  - [ ] Выбор героя.
-  - [ ] Три таблицы/списка: counter, good, synergy.
-  - [ ] Пометка малой выборки.
+  - [x] Выбор героя.
+  - [x] Три таблицы/списка: counter, good, synergy.
+  - [x] Пометка малой выборки.
 - **Приёмка:** данные читаются из `vetmo_hero_matchups`.
 
 ### T-108. GUI: вкладка «Сырые данные STRATZ»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/tabs/raw_tab.py`
 - **Шаги:**
-  - [ ] Выбор запроса и параметров.
-  - [ ] Выполнение через `StratzClient`.
-  - [ ] JSON-viewer, статус, время.
+  - [x] Выбор запроса и параметров.
+  - [x] Выполнение через `StratzClient`.
+  - [x] JSON-viewer, статус, время.
 - **Приёмка:** запросы выполняются, JSON отображается.
 
 ### T-109. GUI: вкладка «История запусков»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/tabs/runs_tab.py`
 - **Шаги:**
-  - [ ] Таблица `vetmo_sync_runs`.
-  - [ ] Детали выбранного run.
+  - [x] Таблица `vetmo_sync_runs`.
+  - [x] Детали выбранного run.
 - **Приёмка:** история отображается.
 
 ### T-110. GUI: вкладка «Настройки»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/admin/tabs/settings_tab.py`
 - **Шаги:**
-  - [ ] Статус ключей (маскировано).
-  - [ ] Проверка Supabase/STRATZ.
-  - [ ] Открыть папку с секретами.
+  - [x] Статус ключей (маскировано).
+  - [x] Проверка Supabase/STRATZ.
+  - [x] Открыть папку с секретами.
 - **Приёмка:** проверки работают, ключи не отображаются.
 
 ### T-111. Пользовательское приложение: кнопка «Обновить из БД»
 - **Агент:** gui-agent
 - **Файлы:** `src/vetmo/ui/main_window.py`, `src/vetmo/services/supabase_meta.py` (при необходимости)
 - **Шаги:**
-  - [ ] Кнопка/пункт меню «Обновить из БД».
-  - [ ] Повторная загрузка меты/матчапов через `anon`.
-  - [ ] Без каких-либо записей в БД.
+  - [x] Кнопка/пункт меню «Обновить из БД».
+  - [x] Повторная загрузка меты/матчапов через `anon`.
+  - [x] Без каких-либо записей в БД.
 - **Приёмка:** данные обновляются, запись не происходит.
 
 ### T-112. Тесты
 - **Агент:** qa-agent
 - **Файлы:** `tests/admin/`
 - **Шаги:**
-  - [ ] `test_workers.py` — сигналы, отмена.
-  - [ ] `test_context.py` — загрузка секретов, отсутствие ключей.
-  - [ ] `test_ui_smoke.py` — окно создаётся, вкладки переключаются.
-  - [ ] `test_no_service_role_in_user_exe.py` — проверка сборки.
+  - [x] `test_workers.py` — сигналы, отмена.
+  - [x] `test_context.py` — загрузка секретов, отсутствие ключей.
+  - [x] `test_ui_smoke.py` — окно создаётся, вкладки переключаются.
+  - [x] `test_security.py` — AST-проверка импортов и исключений `vetmo.spec`; `test_sync_schema.py` — совместимость с удалённой схемой.
 - **Приёмка:** `pytest` зелёный.
 
 ### T-113. QA безопасности
 - **Агент:** qa-agent
 - **Шаги:**
-  - [ ] `git grep` по `service_role`, `VETMO_SYNC_SERVICE_KEY` — пусто в отслеживаемых файлах.
-  - [ ] Проверить RLS: `anon` не может INSERT/UPDATE/DELETE.
-  - [ ] Проверить, что `VETMO.exe` не содержит строк `service_role`/`stratz_sync`.
+  - [x] `git grep` по `service_role`, `VETMO_SYNC_SERVICE_KEY` — пусто в отслеживаемых файлах.
+  - [x] Проверить RLS: `anon` не может INSERT/UPDATE/DELETE.
+  - [x] Проверить, что `VETMO.exe` не содержит строк `service_role`/`stratz_sync`.
 - **Приёмка:** отчёт `docs/qa-admin-security.md`.
 
 ### T-114. Упаковка
 - **Агент:** packaging-agent
 - **Файлы:** `vetmo.spec`, `vetmo-admin.spec`
 - **Шаги:**
-  - [ ] `VETMO-Admin.exe` — entry point `vetmo.admin.main`.
-  - [ ] `VETMO.exe` — без admin/sync-модулей.
-  - [ ] Проверить запуск обоих exe.
+  - [x] `VETMO-Admin.exe` — entry point `vetmo.admin.main`.
+  - [x] `VETMO.exe` — без admin/sync-модулей.
+  - [x] Проверить запуск обоих exe.
 - **Приёмка:** оба exe собираются и запускаются; секретов внутри нет.
 
 ---
 
 ## 8. Критерии готовности
 
-- [ ] Ветка `beta2` создана, sync-код работает.
-- [ ] Admin-программа запускается, все вкладки доступны.
-- [ ] Sync meta/full/dry-run запускается из UI, прогресс и лог отображаются.
-- [ ] Мета, матчапы, история и сырые данные STRATZ отображаются.
-- [ ] Пользовательское приложение читает БД и не пишет.
-- [ ] `VETMO-Admin.exe` собран, `VETMO.exe` не содержит admin-кода и `service_role`.
-- [ ] `git grep` по секретам пуст.
-- [ ] Тесты проходят.
+- [x] Ветка `beta2` создана, sync-код работает.
+- [x] Admin-программа запускается, все вкладки доступны.
+- [x] Sync meta/full/dry-run запускается из UI, прогресс и лог отображаются.
+- [x] Мета, матчапы, история и сырые данные STRATZ отображаются.
+- [x] Пользовательское приложение читает БД и не пишет.
+- [x] `VETMO-Admin.exe` собран, `VETMO.exe` не содержит admin-кода и `service_role`.
+- [x] `git grep` по секретам пуст.
+- [x] Тесты проходят.
 
 ---
 

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from vetmo.admin.tabs.common import JsonViewer
 from vetmo.domain.rank_brackets import (
     ALL_BRACKET,
+    BASIC_BRACKET_BY_RANK,
     BASIC_BRACKETS,
     basic_bracket_for_rank,
     basic_bracket_label,
@@ -29,7 +30,6 @@ from vetmo.services.stratz_client import (
     MATCHUP_QUERY,
     WIN_DAY_QUERY,
 )
-from vetmo.services.stratz_sync import RANK_BRACKETS
 from vetmo.ui.workers import start_worker
 
 if TYPE_CHECKING:
@@ -182,7 +182,7 @@ class RawTab(QWidget):
 
         if key == "winDay":
             variables: dict[str, Any] = {"take": 3000}
-            bracket = RANK_BRACKETS.get(rank)
+            bracket = BASIC_BRACKET_BY_RANK.get(rank)
             if bracket:
                 variables["bracketIds"] = [bracket]
             if position > 0:
