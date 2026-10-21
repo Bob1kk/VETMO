@@ -94,6 +94,44 @@ def _upsert(gateway: SupabaseGateway, table: str, rows: list[dict[str, Any]], co
         gateway.upsert(table, rows, on_conflict=conflict)
 
 
+def _supports_column(gateway: SupabaseGateway, column: str) -> bool:
+    """Проверяет, применена ли миграция с колонкой ``vetmo_sync_runs``.
+
+    На удалённой БД колонки ``trigger_source``/``request_id`` могут
+    отсутствовать. Тогда не роняем sync: значения сохраняются в
+    ``details`` (jsonb), а отдельное поле пишется только после миграции.
+    """
+    try:
+        gateway.select("vetmo_sync_runs", columns=column, limit=1)
+    except Exception as exc:  # noqa: BLE001 - отличаем отсутствие колонки от сети
+        message = str(exc)
+        if column in message and ("42703" in message or "PGRST204" in message):
+            logger.warning(
+                "vetmo_sync_runs.%s отсутствует; значение будет сохранено в details",
+                column,
+            )
+            return False
+        raise
+    return True
+
+
+def _optional_field(include: bool, name: str, value: str | None) -> dict[str, str]:
+    """Поле для payload, только если колонка существует и значение задано."""
+    if include and value:
+        return {name: value}
+    return {}
+
+
+def _trace_details(trigger: str | None, request_id: str | None) -> dict[str, str]:
+    """Трассировка запуска для ``details`` (работает без миграции)."""
+    details: dict[str, str] = {}
+    if trigger:
+        details["trigger_source"] = trigger
+    if request_id:
+        details["request_id"] = request_id
+    return details
+
+
 def sync_all(
     *,
     dry_run: bool = False,
@@ -116,6 +154,10 @@ def sync_all(
     client = StratzClient(sync.stratz_token)
     stats = SyncStats()
     gateway = None if dry_run else _service_gateway(sync)
+    include_trigger_source = (
+        gateway is not None and _supports_column(gateway, "trigger_source")
+    )
+    include_request_id = gateway is not None and _supports_column(gateway, "request_id")
     run_id: int | None = None
     cancelled = False
 
@@ -145,12 +187,16 @@ def sync_all(
                 gateway, "vetmo_patches",
                 patch_rows(versions, current_id=current_id, limit=40), "id",
             )
-            run = gateway.insert("vetmo_sync_runs", [{
+            run_payload: dict[str, Any] = {
                 "status": "running", "source": "stratz",
                 "patch_version": current_name,
-                "trigger_source": trigger,
-                "request_id": request_id,
-            }])
+                **_optional_field(
+                    include_trigger_source, "trigger_source", trigger,
+                ),
+                **_optional_field(include_request_id, "request_id", request_id),
+                "details": _trace_details(trigger, request_id),
+            }
+            run = gateway.insert("vetmo_sync_runs", [run_payload])
             run_id = int(run[0]["id"]) if run else None
 
         # --- banDay: пер-геройные баны (один запрос на все срезы) ---
@@ -345,13 +391,18 @@ def sync_all(
                     "finished_at": datetime.now(UTC).isoformat(),
                     "rows_meta": stats.rows_meta,
                     "rows_matchups": stats.rows_matchups,
-                    "trigger_source": trigger,
-                    "request_id": request_id,
+                    **_optional_field(
+                        include_trigger_source, "trigger_source", trigger,
+                    ),
+                    **_optional_field(
+                        include_request_id, "request_id", request_id,
+                    ),
                     "details": {
                         "slices": stats.slices,
                         "period_end": stats.period,
                         "cancelled": cancelled,
                         "errors": stats.errors[:20],
+                        **_trace_details(trigger, request_id),
                     },
                     "error": "; ".join(stats.errors[:5]) or None,
                 },
@@ -366,8 +417,12 @@ def sync_all(
                     {
                         "status": "error",
                         "finished_at": datetime.now(UTC).isoformat(),
-                        "trigger_source": trigger,
-                        "request_id": request_id,
+                        **_optional_field(
+                            include_trigger_source, "trigger_source", trigger,
+                        ),
+                        **_optional_field(
+                            include_request_id, "request_id", request_id,
+                        ),
                         "error": f"{type(exc).__name__}: {exc}"[:1000],
                     },
                     {"id": run_id},

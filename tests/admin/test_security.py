@@ -88,9 +88,43 @@ def test_user_app_context_passes_only_anon_settings_to_gateway() -> None:
     assert "sync_settings" not in text
 
 
-def test_pyinstaller_spec_does_not_hide_import_admin_modules() -> None:
-    text = SPEC.read_text(encoding="utf-8")
+def _constant_strings(node: ast.AST) -> list[str]:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return []
+    return [
+        item.value
+        for item in node.elts
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    ]
 
-    assert "vetmo.admin" not in text
-    assert "stratz_sync" not in text
-    assert "stratz_client" not in text
+
+def test_pyinstaller_spec_excludes_admin_and_sync_from_user_build() -> None:
+    tree = ast.parse(SPEC.read_text(encoding="utf-8"))
+
+    excludes: list[str] = []
+    analysis: ast.Call | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            if any(
+                isinstance(target, ast.Name) and target.id == "_EXCLUDES"
+                for target in node.targets
+            ):
+                excludes = _constant_strings(node.value)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Analysis"
+        ):
+            analysis = node
+
+    assert analysis is not None, "в vetmo.spec нет вызова Analysis"
+    assert _constant_strings(analysis.args[0]) == ["src/vetmo/main.py"]
+
+    hidden: list[str] = []
+    for keyword in analysis.keywords:
+        if keyword.arg == "hiddenimports":
+            hidden = _constant_strings(keyword.value)
+
+    for module in FORBIDDEN_IMPORTS:
+        assert module in excludes, f"{module} не исключён из пользовательской сборки"
+        assert module not in hidden
