@@ -670,13 +670,60 @@ QLabel#overlayTeamTitle {
 }
 QLabel#overlayTeamTitle[team="radiant"] { color: $ok; }
 QLabel#overlayTeamTitle[team="dire"] { color: $danger; }
-QLabel#overlayPosBadge {
+QLabel#overlayTeamCount {
+    color: $muted;
+    font-size: 9px;
+    font-weight: 700;
+    background: transparent;
+}
+QFrame#overlaySlot {
+    background: $panel_3;
+    border: 1px dashed $border;
+    border-radius: 8px;
+}
+QFrame#overlaySlot:hover {
+    background: $accent_soft;
+    border: 1px dashed $accent;
+}
+QFrame#overlaySlot[filled="true"] {
+    background: $panel_2;
+    border: 1px solid $border;
+}
+QFrame#overlaySlot[filled="true"]:hover { border: 1px solid $accent; }
+QLabel#overlaySlotBadge {
     background: $panel_3;
     border: 1px solid $border;
-    border-radius: 9px;
+    border-radius: 8px;
     color: $muted;
     font-size: 9px;
     font-weight: 800;
+}
+QLabel#overlaySlotName {
+    color: $text;
+    font-size: 11px;
+    font-weight: 600;
+    background: transparent;
+}
+QPushButton#overlaySlotClear {
+    background: transparent;
+    border: none;
+    border-radius: 9px;
+    color: $muted;
+    font-size: 13px;
+    font-weight: 800;
+    padding: 0;
+}
+QPushButton#overlaySlotClear:hover {
+    background: $danger;
+    color: $on_accent;
+}
+QLabel#overlaySuggestTitle {
+    color: $muted;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    background: transparent;
+    padding-top: 2px;
 }
 QFrame#overlayCard {
     background: $panel_2;
@@ -699,7 +746,6 @@ QFrame#overlayCard QLabel#cardWr {
     font-size: 10px;
     font-weight: 700;
 }
-QLabel#overlayPosLabel { color: $muted; font-size: 10px; font-weight: 600; }
 QLabel#overlayHint { color: $muted; font-size: 9px; background: transparent; }
 """.lstrip()
 )

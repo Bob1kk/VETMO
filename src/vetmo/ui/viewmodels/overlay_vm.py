@@ -28,12 +28,19 @@ class OverlayEntry:
     score: float
     reason: str
     win_rate: float | None = None
+    position: int | None = None
 
     def wr_text(self) -> str:
         """Текст винрейта (или пустая строка)."""
         if self.win_rate is None:
             return ""
         return f"WR {self.win_rate:.1f}%"
+
+    def reason_text(self) -> str:
+        """Причина с позицией: «Поз. 2 · Контр-пик»."""
+        if self.position is None:
+            return self.reason
+        return f"Поз. {self.position} · {self.reason}"
 
 
 @dataclass
@@ -48,6 +55,10 @@ class OverlaySnapshot:
     )
     picked: dict[str, dict[int, Hero | None]] = field(
         default_factory=lambda: {_TEAM_RADIANT: {}, _TEAM_DIRE: {}},
+    )
+    # Подсказки «снизу»: лучшие герои команды по совокупности всех позиций.
+    suggestions: dict[str, list[OverlayEntry]] = field(
+        default_factory=lambda: {_TEAM_RADIANT: [], _TEAM_DIRE: []},
     )
 
     def step_text(self) -> str:
@@ -88,8 +99,9 @@ class OverlayViewModel:
     # --- полный снимок (worker-поток) ---
     def compute_all(
         self, session_id: int | None = None, limit: int = 3,
+        suggestions_limit: int = 4,
     ) -> OverlaySnapshot:
-        """Снимок обеих колонок: рекомендации, пикнутые, шаг драфта."""
+        """Снимок обеих колонок: пики, рекомендации, шаг драфта."""
         state = self._draft.get_state(session_id)
         meta_wr = self._meta_win_rates()
         snapshot = OverlaySnapshot(
@@ -110,6 +122,9 @@ class OverlayViewModel:
                 snapshot.columns[team][position] = self._entries_for(
                     position, team, state, opponents, priorities, meta_wr, limit,
                 )
+            snapshot.suggestions[team] = _flatten_suggestions(
+                snapshot.columns[team], suggestions_limit,
+            )
         return snapshot
 
     # --- внутренние ---
@@ -140,7 +155,7 @@ class OverlayViewModel:
             )
             entries.append(OverlayEntry(
                 hero=hero, score=score, reason=reason,
-                win_rate=meta_wr.get(hero.id),
+                win_rate=meta_wr.get(hero.id), position=position,
             ))
         return entries
 
@@ -172,6 +187,24 @@ class OverlayViewModel:
 
 
 _LARGE_LIMIT = 200
+
+
+def _flatten_suggestions(
+    columns: dict[int, list[OverlayEntry]], limit: int,
+) -> list[OverlayEntry]:
+    """Лучшие уникальные герои команды по всем позициям (для блока подсказок)."""
+    if limit <= 0:
+        return []
+    seen: set[int] = set()
+    merged: list[OverlayEntry] = []
+    for position in sorted(columns):
+        for entry in columns[position]:
+            if entry.hero.id in seen:
+                continue
+            seen.add(entry.hero.id)
+            merged.append(entry)
+    merged.sort(key=lambda entry: (-entry.score, entry.hero.localized_name))
+    return merged[:limit]
 
 
 def _next_team(state: DraftSession) -> str:

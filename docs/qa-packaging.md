@@ -1,135 +1,151 @@
 # QA упаковки VETMO и VETMO Admin (T-114)
 
-Дата: 2026-10-21, ветка `beta2`.
-Последняя пересборка: 2026-10-21 19:16–19:19, после коммита `dc050ae`.
+Дата: 2026-10-23, ветка `release/public-installer`.
+Последняя пересборка: 2026-10-23 01:50–01:52, после добавления доски пиков
+в оверлей и отдельного установщика Admin.
+Сборка: `.\scripts\build_release.ps1 -SkipTests` (тесты прогонялись отдельно:
+226 passed). Python 3.13.9, PyInstaller 6.22.3, Inno Setup 6.7.3.
 
-## Пользовательский установщик и сборка без секретов
+## Что изменилось в этой сборке
 
-Проверка выполнена после пересоздания локального `.venv` на Python 3.12.6
-(PyInstaller 6.22.3). Сборка запускалась через
-`.\scripts\build_release.ps1 -IsccPath <путь к ISCC.exe>`.
-
-- `dist/VETMO.exe` — 66 469 677 байт; SHA256
-  `72af8207b589b09caa416752e9ccc3f0a4c4bc60de9e57a44354143aeff3062f`.
-- `release/VETMO-Setup-0.1.0.exe` — 67 562 747 байт; SHA256
-  `56bcd1c1edbbf55c3e44b29b587eb2de46e961d294791b0e1daeb19505e7a0d8`.
-- Установщик per-user (`%LOCALAPPDATA%\Programs\VETMO`), без прав
-  администратора; ярлык в «Пуск», опционально на рабочий стол.
-- Тихая установка, запуск установленного exe и тихое удаление прошли.
-- В exe присутствует `vetmo.infra.public_config`, отсутствуют
-  `vetmo.admin`, `vetmo.infra.sync_settings`, `vetmo.services.stratz_client`,
-  `vetmo.services.stratz_sync`, `vetmo.services.stratz_aggregate`.
-- Smoke с временным пустым `APPDATA` (без `.env`/`secrets.env`): процесс жив,
-  лог создан, `Traceback` нет; запросы `vetmo_heroes` и
-  `vetmo_get_meta_report` вернули HTTP 200. Файлы секретов приложение не создало.
-- Анонимная авторизация Supabase возвращает 422; это ожидаемо для текущей
-  схемы. Настройки и драфты сохраняются локально (fallback).
-- Артефакты не подписаны Authenticode; для публичного релиза нужен
-  код-сертификат, иначе возможен warning SmartScreen.
-
-## Пересборка после `dc050ae`
-
-Коммит `dc050ae` — `fix(sync): tolerate missing sync_runs trace columns`:
-если в удалённой БД нет колонок `trigger_source`/`request_id`, sync больше не
-падает. `_supports_column` проверяет наличие колонки, а значения пишутся в
-`details` (jsonb); отдельные поля заполняются только после миграции.
-
-- `VETMO-Admin.exe` пересобран из текущего дерева (`beta2`, `dc050ae`).
-- В PYZ Admin-сборки проверено наличие fallback-кода: из `vetmo.services.stratz_sync`
-  извлечены `_supports_column`, `_optional_field`, `_trace_details` и строки
-  `trigger_source`/`request_id`.
-- `VETMO.exe` пересобран для чистоты, хотя пользовательский код и `vetmo.spec`
-  в `dc050ae` не менялись.
-
-Реальный meta-sync через `SyncRunner` прошёл: `run id 14`, `status=ok`,
-patch `7.41f` (id 190), `rows_meta=6858`, 54 среза, 0 ошибок;
-`trigger_source` и `request_id` сохранены в `details`.
-
-## Окружение
-
-- Python: 3.13.9 (`.\.venv\Scripts\python.exe`)
-- PyInstaller: 6.22.3
-- Платформа: Windows, one-file GUI-сборки (`console=False`)
-- PySide6, supabase-py, curl_cffi — из `.venv`
+- **Доска пиков в оверлее (FR-004).** У каждой команды 5 кликабельных клеток
+  (позиции 1–5), клик открывает диалог выбора героя с фильтром по атрибутам
+  (`str`/`agi`/`int`/`all`) и поиском. Под клетками — блок «ПОДСКАЗКИ»:
+  лучшие уникальные герои команды по всем позициям, с учётом уже выбранных
+  пиков. Крестик в клетке убирает пик.
+- **Перетаскивание оверлея.** Шапка окна перемещает оверлей; новая позиция
+  сохраняется в настройках (`SupabaseSettingsService.set_overlay_position`).
+- **Запись пика в произвольную клетку.** `SupabaseDraftService.set_pick` /
+  `clear_pick` не требуют порядка 2-2-1, запрещают дубли героев и работают
+  через локальный JSON-фолбэк при недоступном Supabase.
+- **Отдельный установщик Admin.** `installer/VETMO-Admin.iss` +
+  `installer/ADMIN-SETUP.txt`; пользовательский установщик не изменился по
+  смыслу, но пересобран вместе с общим сценарием.
+- **Admin: логирование и `--self-check`.** Admin теперь вызывает
+  `setup_logging` (раньше лог не создавался вовсе) и умеет проверять
+  конфигурацию без GUI: `VETMO-Admin.exe --self-check` → код 2, если секретов
+  нет, без модальных диалогов.
 
 ## Сборочные файлы
 
 - `vetmo.spec` — пользовательское приложение, entry `src/vetmo/main.py`, результат `dist/VETMO.exe`.
+  - `_EXCLUDES` содержит `vetmo.admin`, `vetmo.infra.sync_settings`,
+    `vetmo.services.stratz_client`, `vetmo.services.stratz_sync`,
+    `vetmo.services.stratz_aggregate` — пользовательская сборка не содержит admin/sync-код.
 - `vetmo-admin.spec` — Admin, entry `src/vetmo/admin/main.py`, результат `dist/VETMO-Admin.exe`.
   - `datas`: `src/vetmo/data/heroes_seed.json` → `vetmo/data/heroes_seed.json`, `vetmo_icon.ico` и `vetmo_icon.bmp` в корень бандла.
   - `hiddenimports`: `logging.config`, `logging.handlers`.
   - Миграции Alembic Admin не нужны: `vetmo.admin` не импортирует `vetmo.data.db`/Alembic; сборка и запуск без них проходят.
   - Секретов и путей к `secrets.env` в спеке нет.
-- В `vetmo.spec` в `_EXCLUDES` добавлены `vetmo.admin`, `vetmo.infra.sync_settings`, `vetmo.services.stratz_client`, `vetmo.services.stratz_sync`, `vetmo.services.stratz_aggregate` — пользовательская сборка не содержит admin/sync-код.
+- `installer/VETMO.iss` — установщик игрового клиента: per-user,
+  `%LOCALAPPDATA%\Programs\VETMO`, без прав администратора.
+- `installer/VETMO-Admin.iss` — установщик Admin: per-user,
+  `%LOCALAPPDATA%\Programs\VETMO Admin`; создаёт пустой `%APPDATA%\VETMO`
+  и кладёт `ADMIN-SETUP.txt`, секреты не копирует.
+- `scripts/build_release.ps1` — одна команда: тесты (pytest/ruff/mypy) → оба exe →
+  проверки состава и значений секретов → smoke → оба установщика →
+  тихая установка/удаление каждого → `release/SHA256SUMS.txt`.
+  - Пользовательский smoke: запуск с чистым `APPDATA`, проверка живого процесса,
+    создания лога и отсутствия `secrets.env`/`.env`.
+  - Admin smoke: `VETMO-Admin.exe --self-check` с заведомо отсутствующим
+    `VETMO_SYNC_SECRETS_FILE` — ожидается код 2, запись `Self-check` в логе
+    и отсутствие диалогов (иначе процесс завис бы в неинтерактивной сессии).
 
 ## Команды сборки
 
 ```powershell
-.\.venv\Scripts\python.exe -m PyInstaller vetmo-admin.spec --noconfirm
-.\.venv\Scripts\python.exe -m PyInstaller vetmo.spec --noconfirm
+.\scripts\build_release.ps1              # тесты + exe + установщики + проверки
+.\scripts\build_release.ps1 -SkipTests   # только пересборка артефактов
 ```
 
-Обе пересборки завершились с кодом `0` («Build complete»).
+Сборка завершилась с кодом `0`: «Build complete» для обеих PyInstaller-сборок,
+«Successful compile» для обоих установщиков.
 
-## Размеры артефактов
+## Размеры и контрольные суммы артефактов
 
-| Файл | Размер, байт | Размер, МиБ | Время сборки |
+| Файл | Размер, байт | Размер, МиБ | SHA256 |
 |---|---:|---:|---|
-| `dist/VETMO.exe` | 67 547 183 | 64,42 | 2026-10-21 19:19:19 |
-| `dist/VETMO-Admin.exe` | 64 472 187 | 61,49 | 2026-10-21 19:17:27 |
+| `dist/VETMO.exe` | 67 566 560 | 64,44 | `c541f2589346f0f944593a7871ad24d0d320de7b5b2efc8992fc6e32c386e590` |
+| `dist/VETMO-Admin.exe` | 69 374 565 | 66,16 | `89acc971dc43c26f6c341d7b6ab8c022336ec5ba14d8468def5f67c992942baf` |
+| `release/VETMO-Setup-0.1.0.exe` | 68 666 414 | 65,49 | `c4c0f99b49d639717b683d682711230527b912c87281cc1b35aab76d9b7eb09d` |
+| `release/VETMO-Admin-Setup-0.1.0.exe` | 70 602 171 | 67,33 | `b0466044dc7cb99ba9d1fd8ac92618fe308799b0ce6f6588a529bded79323e57` |
 
-## Побайтовый поиск строк в `dist/VETMO.exe`
+Те же значения записаны скриптом в `release/SHA256SUMS.txt`.
+`release/` и `dist/` не коммитятся (`.gitignore`).
 
-Метод: чтение файла в байтах и поиск UTF-8 подстрок. Ожидалось `False` для всех маркеров.
+## Проверка состава `dist/VETMO.exe`
 
-| Маркер | Найдено |
+Метод: побайтовый поиск UTF-8 подстрок + список модулей через
+`python -m PyInstaller.utils.cliutils.archive_viewer -r -b`.
+
+| Проверка | Результат |
 |---|---|
-| `service_role` | False |
-| `stratz_sync` | False |
-| `stratz_client` | False |
-| `VETMO_SYNC_SERVICE_KEY` | False |
-| `vetmo.admin` | False |
-| `vetmo.services.stratz_sync` | False |
-| `vetmo.infra.sync_settings` | False |
+| Запрещённые строки (`service_role`, `stratz_sync`, `stratz_client`, `VETMO_SYNC_SERVICE_KEY`, `VETMO_SYNC_STRATZ_TOKEN`, `vetmo.admin`, `vetmo.infra.sync_settings`) | не найдены |
+| Запрещённые модули (`vetmo.admin`, `vetmo.infra.sync_settings`, `vetmo.services.stratz_client`, `vetmo.services.stratz_sync`, `vetmo.services.stratz_aggregate`) | отсутствуют |
+| Обязательный модуль `vetmo.infra.public_config` (публичные URL/anon-ключ Supabase) | присутствует |
+| Значения секретов из `%APPDATA%\VETMO\secrets.env` (3 значения) | не найдены |
 
-## Побайтовый поиск строк в `dist/VETMO-Admin.exe`
+## Проверка состава `dist/VETMO-Admin.exe`
 
-| Маркер | Найдено |
+| Проверка | Результат |
 |---|---|
-| `vetmo.admin` | True |
-| `vetmo.services.stratz_sync` | True |
+| Обязательные модули `vetmo.admin`, `vetmo.services.stratz_sync` | присутствуют |
+| Значения секретов из `secrets.env` (3 значения) | не найдены |
 
-Admin-код в сборке присутствует. Дополнительно проверено извлечение
-`vetmo.services.stratz_sync` из PYZ: fallback-функции `dc050ae` на месте.
+Пути к `secrets.env` и значения ключей в спеке Admin отсутствуют: файл
+читается только в рантайме через `vetmo.infra.sync_settings`.
 
-## Проверка секретов
+## Smoke-запуски
 
-Источник: `%APPDATA%\VETMO\secrets.env` (путь получен через `vetmo.infra.sync_settings.default_secrets_path()`). Файл существует. Значения не выводились и не сохранялись в отчёт — только имена переменных и результат поиска.
+| Проверка | Результат |
+|---|---|
+| `VETMO.exe` с чистым `APPDATA`, `QT_QPA_PLATFORM=offscreen`, 12 с | процесс жив, лог `VETMO\logs\vetmo.log` создан, `Traceback` в логе нет, `secrets.env`/`.env` не созданы |
+| `VETMO-Admin.exe --self-check` с несуществующим `VETMO_SYNC_SECRETS_FILE` | код возврата 2, в логе запись `Self-check: секреты недоступны`, файл секретов не создан |
+| Установленный `VETMO.exe` (после тихой установки) | smoke пройден |
+| Установленный `VETMO-Admin.exe --self-check` | код 2, лог создан |
 
-| Переменная | Есть в файле | В `VETMO.exe` | В `VETMO-Admin.exe` |
-|---|---|---|---|
-| `VETMO_SYNC_SERVICE_KEY` | True | False | False |
-| `VETMO_SYNC_STRATZ_TOKEN` | True | False | False |
-| `VETMO_SYNC_SERVICE_KEY_NEW` | True | False | False |
+Замер «холодный старт < 3 с» в неинтерактивной сессии не перепроверялся:
+опрос `MainWindowHandle` не видит окно (особенность сессии); NFR-001
+проверялся в T-020.
 
-Значения секретов не найдены ни в одном exe.
+## Установщики (Inno Setup 6.7.3)
 
-## Smoke-запуск
+| Установщик | Каталог | Проверка |
+|---|---|---|
+| `VETMO-Setup-0.1.0.exe` | `%LOCALAPPDATA%\Programs\VETMO` | `/VERYSILENT /NOICONS /DIR=...` → exe на месте → smoke → `unins000.exe /VERYSILENT` → каталог удалён |
+| `VETMO-Admin-Setup-0.1.0.exe` | `%LOCALAPPDATA%\Programs\VETMO Admin` | то же + `--self-check` установленного exe |
 
-Оба exe запускались с `QT_QPA_PLATFORM=offscreen`, через `Start-Process -PassThru`, ожидание 8 секунд.
+Оба установщика per-user (`PrivilegesRequired=lowest`), поддерживают русский и
+английский языки, создают ярлыки в «Пуск» и (опционально) на рабочем столе.
+Установщики и exe не подписаны: для публичного релиза нужна Authenticode-подпись.
 
-| exe | Процесс жив через 8 с | Код выхода | Действие |
-|---|---|---|---|
-| `VETMO.exe` | Да (PID 15756) | — | остановлен вместе с дочерним процессом one-file bootloader |
-| `VETMO-Admin.exe` | Да (PID 6460) | — | остановлен вместе с дочерним процессом one-file bootloader |
+## Тесты
 
-`secrets.env` существует, поэтому Admin не показывал диалог об отсутствии секретов. Мгновенного падения с ошибкой импорта нет: процессы живы спустя 8 секунд.
+`pytest tests/ -q` — 226 passed, включая:
 
-Дополнительно: запуск `VETMO.exe` в обычном (не offscreen) режиме — процесс оставался жив 15 секунд. Точное время появления окна в этой сессии измерить не удалось: опрос `MainWindowHandle` не увидел окно (особенность неинтерактивной сессии), поэтому замер «холодный старт < 3 с» здесь не перепроверялся; NFR-001 проверялся в T-020.
+- `tests/integration/test_overlay_window.py` — клетки 1..5, клик по клетке,
+  крестик очистки, подсказки, `show_dire`, перетаскивание;
+- `tests/integration/test_hero_pick_dialog.py` — фильтр по атрибутам, поиск,
+  предвыбор текущего героя;
+- `tests/unit/test_overlay_board_service.py` — `set_pick`/`clear_pick`:
+  произвольный порядок, замена, запрет дублей, очистка;
+- `tests/unit/test_overlay_vm_suggestions.py` — dedupe и сортировка подсказок;
+- `tests/admin/test_main.py` — `--self-check` без секретов (код 2 + лог).
+
+`ruff check src/ tests/` и `mypy src/vetmo` — без замечаний.
 
 ## Замечания
 
-- Перед пересборкой остановлены старые процессы `VETMO`/`VETMO-Admin`, включая дочерние процессы one-file bootloader, которые держали exe и мешали перезаписи.
-- В `build/vetmo-admin/warn-vetmo-admin.txt` остаются стандартные предупреждения PyInstaller об опциональных модулях (`rich`, `boto3`, `azure`, `gevent`, `eventlet`, `tzdata` и т.п.). Они не входят в рантайм Admin; запуск exe подтверждает отсутствие ошибок импорта.
-- `curl_cffi` (нужен `stratz_client`) и его DLL корректно попали в Admin-сборку; дополнительных `hiddenimports`/`datas` не потребовалось.
-- Проверка секретов — побайтовая; она не заменяет аудит рантайма, но подтверждает, что значения ключей не упакованы в артефакты.
+- Перед пересборкой нужно закрыть запущенные `VETMO`/`VETMO-Admin`: скрипт
+  проверяет процессы и падает с понятным сообщением, если они остались.
+- В `build/vetmo-admin/warn-vetmo-admin.txt` остаются стандартные
+  предупреждения PyInstaller об опциональных модулях (`rich`, `boto3`,
+  `azure`, `gevent`, `eventlet`, `tzdata` и т.п.). Они не входят в рантайм
+  Admin; запуск exe подтверждает отсутствие ошибок импорта.
+- `curl_cffi` (нужен `stratz_client`) и его DLL корректно попали в
+  Admin-сборку; дополнительных `hiddenimports`/`datas` не потребовалось.
+- Проверка секретов — побайтовая; она не заменяет аудит рантайма, но
+  подтверждает, что значения ключей не упакованы в артефакты.
+- Не перенаправляйте вывод `build_release.ps1` через `2>&1 | Tee-Object`:
+  при `$ErrorActionPreference = "Stop"` stderr PyInstaller превращается в
+  `NativeCommandError` и валит сборку. Запускайте скрипт напрямую.

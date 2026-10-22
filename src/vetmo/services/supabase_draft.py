@@ -10,7 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from vetmo.data.supabase_heroes import SupabaseHeroRepository
 from vetmo.domain.matchup import MatchupEntry, MatchupReport
@@ -132,6 +132,52 @@ class SupabaseDraftService:
             {"team": pick.team, "position": pick.position, "hero_id": pick.hero_id, "step": step}
         )
         row["current_step"] = min(TOTAL_PICKS, step + 1)
+        self._write_local()
+
+    def _local_upsert_pick(
+        self, session_id: int, pick: Pick, step: int,
+    ) -> None:
+        """Ставит/заменяет пик в ячейке (team, position) локального JSON."""
+        row = next(
+            (s for s in self._local.get("sessions", []) if s.get("id") == session_id),
+            None,
+        )
+        if row is None:
+            raise ValueError(f"Сессия драфта не найдена: {session_id}")
+        picks = [
+            p for p in row.get("picks", [])
+            if not (
+                p.get("team") == pick.team
+                and int(p.get("position", 0)) == pick.position
+            )
+        ]
+        picks.append({
+            "team": pick.team, "position": pick.position,
+            "hero_id": pick.hero_id, "step": step,
+        })
+        picks.sort(key=lambda p: int(p.get("step", 0)))
+        row["picks"] = picks
+        row["current_step"] = min(TOTAL_PICKS, len(picks))
+        self._write_local()
+
+    def _local_remove_pick(
+        self, session_id: int, team: str, position: int,
+    ) -> None:
+        """Убирает пик из ячейки (team, position) локального JSON."""
+        row = next(
+            (s for s in self._local.get("sessions", []) if s.get("id") == session_id),
+            None,
+        )
+        if row is None:
+            return
+        picks = [
+            p for p in row.get("picks", [])
+            if not (
+                p.get("team") == team and int(p.get("position", 0)) == position
+            )
+        ]
+        row["picks"] = picks
+        row["current_step"] = min(TOTAL_PICKS, len(picks))
         self._write_local()
 
     # ------------------------------------------------------------- remote --
@@ -286,6 +332,134 @@ class SupabaseDraftService:
             taken = [p.position for p in state.picks if p.team == team]
             position = suggest_position(team, taken)
         return self.add_pick(team, position, hero_id, session_id=state.id)
+
+    # -------------------------------------------------- доска оверлея ------
+    def set_pick(
+        self, team: str, position: int, hero_id: int,
+        session_id: int | None = None,
+    ) -> DraftSession:
+        """Ставит героя в конкретную клетку (team, position) вне 2-2-1.
+
+        Нужно оверлею: пользователь кликает по клетке и выбирает героя.
+        Ранее записанный в этой клетке герой заменяется; дубли героев
+        запрещены. Номер шага сохраняет порядок записей для рекомендаций.
+        """
+        if team not in ("radiant", "dire"):
+            raise ValueError(f"Неизвестная команда: {team}")
+        if not 1 <= int(position) <= 5:
+            raise ValueError(f"Позиция вне 1..5: {position}")
+        state = self.get_state(session_id)
+        if state.id is None:
+            state = self.start_session()
+        assert state.id is not None
+        draft_id = int(state.id)
+        position = int(position)
+        hero_id = int(hero_id)
+
+        existing = next(
+            (p for p in state.picks
+             if p.team == team and p.position == position),
+            None,
+        )
+        if existing is not None and existing.hero_id == hero_id:
+            return state
+        if hero_id in {
+            p.hero_id for p in state.picks
+            if not (p.team == team and p.position == position)
+        }:
+            raise ValueError(f"Герой {hero_id} уже пикнут (hero already picked)")
+
+        step = existing.step if existing is not None else len(state.picks)
+        pick_count = len(state.picks) + (0 if existing is not None else 1)
+        user_id = self._user_id()
+        if user_id:
+            try:
+                # Delete+insert вместо update: PostgREST не гарантирует
+                # строку при замене и старый шаг мог остаться.
+                self._gateway.delete(
+                    "vetmo_draft_picks",
+                    {"session_id": draft_id, "team": team,
+                     "position": position},
+                )
+                self._gateway.insert(
+                    "vetmo_draft_picks",
+                    [{
+                        "session_id": draft_id, "team": team,
+                        "position": position, "hero_id": hero_id,
+                        "step": int(step),
+                    }],
+                )
+                self._gateway.update(
+                    "vetmo_drafts",
+                    {"current_step": min(TOTAL_PICKS, pick_count)},
+                    {"id": draft_id, "user_id": user_id},
+                )
+                loaded = self._remote_state(user_id, draft_id)
+                if loaded is not None:
+                    return loaded
+            except Exception as exc:  # noqa: BLE001
+                self._remote_disabled = True
+                logger.info(
+                    "Запись пика оверлея в Supabase не удалась: %s",
+                    type(exc).__name__,
+                )
+                state = self.get_state(draft_id)
+                draft_id = int(state.id or draft_id)
+
+        self._local_upsert_pick(
+            draft_id,
+            Pick(team=cast("Team", team), position=position, hero_id=hero_id),
+            step,
+        )
+        return self._local_session(draft_id)
+
+    def clear_pick(
+        self, team: str, position: int, session_id: int | None = None,
+    ) -> DraftSession:
+        """Убирает пик из клетки (team, position); пустая клетка — no-op."""
+        if team not in ("radiant", "dire"):
+            raise ValueError(f"Неизвестная команда: {team}")
+        if not 1 <= int(position) <= 5:
+            raise ValueError(f"Позиция вне 1..5: {position}")
+        position = int(position)
+        state = self.get_state(session_id)
+        if state.id is None:
+            return state
+        draft_id = int(state.id)
+        in_slot = any(
+            p.team == team and p.position == position for p in state.picks
+        )
+        if not in_slot:
+            return state
+        pick_count = len(state.picks) - 1
+        user_id = self._user_id()
+        if user_id:
+            try:
+                self._gateway.delete(
+                    "vetmo_draft_picks",
+                    {"session_id": draft_id, "team": team,
+                     "position": position},
+                )
+                self._gateway.update(
+                    "vetmo_drafts",
+                    {"current_step": min(TOTAL_PICKS, pick_count)},
+                    {"id": draft_id, "user_id": user_id},
+                )
+                loaded = self._remote_state(user_id, draft_id)
+                if loaded is not None:
+                    return loaded
+            except Exception as exc:  # noqa: BLE001
+                self._remote_disabled = True
+                logger.info(
+                    "Удаление пика оверлея из Supabase не удалось: %s",
+                    type(exc).__name__,
+                )
+                state = self.get_state(draft_id)
+                draft_id = int(state.id or draft_id)
+
+        self._local_remove_pick(draft_id, team, position)
+        return self._local_session(draft_id)
+
 
     # ------------------------------------------------------- рекомендации --
     def get_recommendations(

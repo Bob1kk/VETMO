@@ -1,7 +1,9 @@
-﻿# VETMO release build: tests -> VETMO.exe -> secret scan -> installer -> smoke.
+﻿# VETMO release build:
+#   tests -> VETMO.exe + VETMO-Admin.exe -> secret/scope scan -> installers -> smoke.
 # Usage:
 #   .\scripts\build_release.ps1
 #   .\scripts\build_release.ps1 -SkipTests -IsccPath "C:\...\ISCC.exe"
+#   .\scripts\build_release.ps1 -SkipInstaller -SkipSmoke
 [CmdletBinding()]
 param(
     [string]$Version = "",
@@ -18,12 +20,17 @@ $OutputEncoding = [Text.Encoding]::UTF8
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
-$DistExe = Join-Path $Root "dist\VETMO.exe"
+$UserExe = Join-Path $Root "dist\VETMO.exe"
+$AdminExe = Join-Path $Root "dist\VETMO-Admin.exe"
 $ReleaseDir = Join-Path $Root "release"
 
 function Write-Step([string]$Text) {
     Write-Host ""
     Write-Host "==> $Text" -ForegroundColor Cyan
+}
+
+function Write-Ok([string]$Text) {
+    Write-Host "OK: $Text" -ForegroundColor Green
 }
 
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments, [string]$ErrorMessage) {
@@ -61,7 +68,7 @@ function Invoke-FileSmoke([string]$ExePath, [string]$Label, [string]$WorkingDire
         if ($unexpected.Count -gt 0) {
             throw "${Label}: приложение создало файл секретов: $($unexpected[0].FullName)"
         }
-        Write-Host "OK: $Label запускается с чистым APPDATA и без secret-файлов." -ForegroundColor Green
+        Write-Ok "$Label запускается с чистым APPDATA и без secret-файлов."
     }
     finally {
         if ($null -ne $process) {
@@ -72,6 +79,62 @@ function Invoke-FileSmoke([string]$ExePath, [string]$Label, [string]$WorkingDire
         }
         $env:APPDATA = $oldAppData
         $env:QT_QPA_PLATFORM = $oldQt
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-AdminSelfCheck([string]$ExePath, [string]$Label) {
+    Write-Step "Смоук ${Label}: --self-check с заведомо отсутствующими секретами"
+    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("vetmo-admin-check-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tempRoot | Out-Null
+    $oldAppData = $env:APPDATA
+    $oldQt = $env:QT_QPA_PLATFORM
+    $oldSecrets = $env:VETMO_SYNC_SECRETS_FILE
+    $process = $null
+    try {
+        $env:APPDATA = $tempRoot
+        $env:QT_QPA_PLATFORM = "offscreen"
+        # Гарантируем отсутствие секретов: путь заведомо не существует.
+        $env:VETMO_SYNC_SECRETS_FILE = Join-Path $tempRoot "no-such-secrets.env"
+        $process = Start-Process -FilePath $ExePath -WorkingDirectory (Split-Path $ExePath) `
+            -ArgumentList "--self-check" -PassThru
+        if (-not $process.WaitForExit(120000)) {
+            & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
+            throw "${Label}: --self-check не завершился за 120 секунд"
+        }
+        if ($process.ExitCode -ne 2) {
+            throw "${Label}: --self-check вернул код $($process.ExitCode), ожидался 2 (нет секретов)"
+        }
+        $logPath = Join-Path $tempRoot "VETMO\logs\vetmo.log"
+        if (-not (Test-Path -LiteralPath $logPath)) {
+            throw "${Label}: --self-check не создал лог $logPath"
+        }
+        $log = Get-Content -LiteralPath $logPath -Raw
+        if ($log -notmatch "Self-check") {
+            throw "${Label}: в логе нет записи Self-check"
+        }
+        $unexpected = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @("secrets.env", ".env") })
+        if ($unexpected.Count -gt 0) {
+            throw "${Label}: приложение создало файл секретов: $($unexpected[0].FullName)"
+        }
+        Write-Ok "${Label}: --self-check возвращает 2 без секретов и пишет лог."
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Refresh()
+            if (-not $process.HasExited) {
+                & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
+            }
+        }
+        $env:APPDATA = $oldAppData
+        $env:QT_QPA_PLATFORM = $oldQt
+        if ($null -ne $oldSecrets) {
+            $env:VETMO_SYNC_SECRETS_FILE = $oldSecrets
+        }
+        else {
+            Remove-Item Env:VETMO_SYNC_SECRETS_FILE -ErrorAction SilentlyContinue
+        }
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
@@ -100,6 +163,160 @@ function Find-Iscc([string]$ExplicitPath) {
         }
     }
     throw "Inno Setup 6.7+ не найден. Установите его или передайте -IsccPath <путь к ISCC.exe>."
+}
+
+function Get-SecretValues {
+    $secretsPath = Join-Path $env:APPDATA "VETMO\secrets.env"
+    $values = @()
+    if (-not (Test-Path -LiteralPath $secretsPath)) {
+        Write-Host "secrets.env отсутствует — проверка значений секретов пропущена." -ForegroundColor Yellow
+        return $values
+    }
+    foreach ($line in Get-Content -LiteralPath $secretsPath) {
+        if ($line -match "^\s*([^#=]+)=(.*)$") {
+            $name = $Matches[1].Trim()
+            $value = $Matches[2].Trim()
+            if ($name -match "SERVICE_KEY|STRATZ_TOKEN|SECRET|PASSWORD" -and $value.Length -ge 8) {
+                $values += $value
+            }
+        }
+    }
+    return $values
+}
+
+function Assert-NoSecretValues([string]$ExePath, [string[]]$SecretValues, [string]$Label) {
+    if ($SecretValues.Count -eq 0) {
+        return
+    }
+    $bytes = [IO.File]::ReadAllBytes($ExePath)
+    try {
+        $haystack = [Text.Encoding]::UTF8.GetString($bytes)
+        foreach ($value in $SecretValues) {
+            if ($haystack.Contains($value)) {
+                throw "${Label}: значение секрета из secrets.env найдено в exe"
+            }
+        }
+    }
+    finally {
+        Remove-Variable bytes -ErrorAction SilentlyContinue
+    }
+    Write-Ok "${Label}: проверено секретов: $($SecretValues.Count), в exe не найдено."
+}
+
+function Assert-ExeMarkers([string]$ExePath, [string[]]$Forbidden, [string]$Label) {
+    $bytes = [IO.File]::ReadAllBytes($ExePath)
+    try {
+        $haystack = [Text.Encoding]::UTF8.GetString($bytes)
+        $found = @($Forbidden | Where-Object { $haystack.Contains($_) })
+        if ($found.Count -gt 0) {
+            throw "${Label}: найдены запрещённые маркеры: $($found -join ', ')"
+        }
+    }
+    finally {
+        Remove-Variable bytes -ErrorAction SilentlyContinue
+    }
+    Write-Ok "${Label}: запрещённых строк нет."
+}
+
+function Assert-ArchiveModules(
+    [string]$ExePath,
+    [string[]]$ForbiddenModules,
+    [string[]]$RequiredModules,
+    [string]$Label
+) {
+    $archiveList = & $Python -m PyInstaller.utils.cliutils.archive_viewer -r -b $ExePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "${Label}: не удалось прочитать список модулей"
+    }
+    $archiveText = $archiveList -join "`n"
+    $foundForbidden = @($ForbiddenModules | Where-Object { $archiveText.Contains($_) })
+    if ($foundForbidden.Count -gt 0) {
+        throw "${Label}: в сборку попали запрещённые модули: $($foundForbidden -join ', ')"
+    }
+    $missing = @($RequiredModules | Where-Object { -not $archiveText.Contains($_) })
+    if ($missing.Count -gt 0) {
+        throw "${Label}: в сборке нет обязательных модулей: $($missing -join ', ')"
+    }
+    Write-Ok "${Label}: состав модулей соответствует ожидаемому."
+}
+
+function Invoke-PyInstaller([string]$SpecName, [string]$ExePath, [string]$BuildLabel) {
+    Write-Step "Сборка $BuildLabel (PyInstaller)"
+    Remove-Item -LiteralPath (Join-Path $Root "build\$BuildLabel") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $ExePath -Force -ErrorAction SilentlyContinue
+    Invoke-Checked $Python @(
+        "-m", "PyInstaller", $SpecName, "--noconfirm", "--clean"
+    ) "PyInstaller ($BuildLabel) завершился с ошибкой"
+    if (-not (Test-Path -LiteralPath $ExePath)) {
+        throw "PyInstaller не создал $ExePath"
+    }
+}
+
+function Invoke-InstallerBuild(
+    [string]$Iscc, [string]$IssName, [string]$SetupPath, [string]$Label
+) {
+    Write-Step "Сборка установщика $Label (Inno Setup)"
+    New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+    Remove-Item -LiteralPath $SetupPath -Force -ErrorAction SilentlyContinue
+    Invoke-Checked $Iscc @(
+        "/DMyAppVersion=$Version", (Join-Path $Root "installer\$IssName")
+    ) "Inno Setup ($Label) завершился с ошибкой"
+    if (-not (Test-Path -LiteralPath $SetupPath)) {
+        throw "Установщик $Label не создан: $SetupPath"
+    }
+    Write-Ok "установщик $Label собран."
+}
+
+function Invoke-InstallerRoundTrip(
+    [string]$SetupExe, [string]$ExeName, [string]$Label, [switch]$Admin
+) {
+    Write-Step "Проверка установщика ${Label}: тихая установка -> запуск -> удаление"
+    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("vetmo-installer-" + [guid]::NewGuid().ToString("N"))
+    $installDir = Join-Path $tempRoot "app"
+    New-Item -ItemType Directory -Path $tempRoot | Out-Null
+    try {
+        $installArgs = @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/NOICONS",
+            "/DIR=`"$installDir`""
+        )
+        $install = Start-Process -FilePath $SetupExe -ArgumentList $installArgs -Wait -PassThru
+        if ($install.ExitCode -ne 0) {
+            throw "Установщик ${Label} вернул код $($install.ExitCode)"
+        }
+        $installedExe = Join-Path $installDir $ExeName
+        if (-not (Test-Path -LiteralPath $installedExe)) {
+            throw "После установки не найден $installedExe"
+        }
+        if (-not $SkipSmoke) {
+            if ($Admin) {
+                Invoke-AdminSelfCheck -ExePath $installedExe -Label "Установленный $ExeName"
+            }
+            else {
+                Invoke-FileSmoke -ExePath $installedExe -Label "Установленный $ExeName" -WorkingDirectory $installDir
+            }
+        }
+        $uninstaller = Join-Path $installDir "unins000.exe"
+        if (-not (Test-Path -LiteralPath $uninstaller)) {
+            throw "Не найден unins000.exe"
+        }
+        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+        ) -Wait -PassThru
+        for ($i = 0; $i -lt 30 -and (Test-Path -LiteralPath $installDir); $i++) {
+            Start-Sleep -Milliseconds 500
+        }
+        if (Test-Path -LiteralPath $installDir) {
+            throw "Uninstaller ($Label) не удалил каталог установки"
+        }
+        Write-Ok "установщик $Label устанавливает и удаляет приложение."
+    }
+    finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if (-not (Test-Path -LiteralPath $Python)) {
@@ -133,18 +350,13 @@ try {
         Invoke-Checked $Python @("-m", "mypy", "src/vetmo", "--ignore-missing-imports") "mypy нашёл ошибки"
     }
 
-    Write-Step "Сборка dist\VETMO.exe (PyInstaller)"
-    Remove-Item -LiteralPath (Join-Path $Root "build\vetmo") -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $DistExe -Force -ErrorAction SilentlyContinue
-    Invoke-Checked $Python @("-m", "PyInstaller", "vetmo.spec", "--noconfirm", "--clean") "PyInstaller завершился с ошибкой"
-    if (-not (Test-Path -LiteralPath $DistExe)) {
-        throw "PyInstaller не создал $DistExe"
-    }
+    $secretValues = @(Get-SecretValues)
+
+    # --- пользовательская сборка: без admin/sync-кода и секретов ---
+    Invoke-PyInstaller "vetmo.spec" $UserExe "vetmo"
 
     Write-Step "Проверка, что в VETMO.exe нет admin/sync-кода и секретов"
-    $bytes = [IO.File]::ReadAllBytes($DistExe)
-    $haystack = [Text.Encoding]::UTF8.GetString($bytes)
-    $markers = @(
+    Assert-ExeMarkers $UserExe @(
         "service_role",
         "stratz_sync",
         "stratz_client",
@@ -152,122 +364,52 @@ try {
         "VETMO_SYNC_STRATZ_TOKEN",
         "vetmo.admin",
         "vetmo.infra.sync_settings"
-    )
-    $foundMarkers = @($markers | Where-Object { $haystack.Contains($_) })
-    if ($foundMarkers.Count -gt 0) {
-        throw "В пользовательской сборке найдены запрещённые маркеры: $($foundMarkers -join ', ')"
-    }
+    ) "VETMO.exe"
+    Assert-ArchiveModules $UserExe `
+        @(
+            "vetmo.admin",
+            "vetmo.infra.sync_settings",
+            "vetmo.services.stratz_client",
+            "vetmo.services.stratz_sync",
+            "vetmo.services.stratz_aggregate"
+        ) `
+        @("vetmo.infra.public_config") `
+        "VETMO.exe"
+    Assert-NoSecretValues $UserExe $secretValues "VETMO.exe"
 
-    $archiveList = & $Python -m PyInstaller.utils.cliutils.archive_viewer -r -b $DistExe
-    if ($LASTEXITCODE -ne 0) {
-        throw "Не удалось прочитать список модулей VETMO.exe"
-    }
-    $archiveText = $archiveList -join "`n"
-    $forbiddenModules = @(
-        "vetmo.admin",
-        "vetmo.infra.sync_settings",
-        "vetmo.services.stratz_client",
-        "vetmo.services.stratz_sync",
-        "vetmo.services.stratz_aggregate"
-    )
-    $foundModules = @($forbiddenModules | Where-Object { $archiveText.Contains($_) })
-    if ($foundModules.Count -gt 0) {
-        throw "В VETMO.exe попали admin/sync-модули: $($foundModules -join ', ')"
-    }
-    if (-not $archiveText.Contains("vetmo.infra.public_config")) {
-        throw "В VETMO.exe нет публичной конфигурации Supabase"
-    }
-    Write-Host "OK: admin/sync-модулей нет, публичная конфигурация Supabase включена." -ForegroundColor Green
+    # --- админская сборка: содержит admin/sync-код, но не значения секретов ---
+    Invoke-PyInstaller "vetmo-admin.spec" $AdminExe "vetmo-admin"
 
-    $secretsPath = Join-Path $env:APPDATA "VETMO\secrets.env"
-    if (Test-Path -LiteralPath $secretsPath) {
-        $secretValues = @()
-        foreach ($line in Get-Content -LiteralPath $secretsPath) {
-            if ($line -match "^\s*([^#=]+)=(.*)$") {
-                $name = $Matches[1].Trim()
-                $value = $Matches[2].Trim()
-                if ($name -match "SERVICE_KEY|STRATZ_TOKEN|SECRET|PASSWORD" -and $value.Length -ge 8) {
-                    $secretValues += $value
-                }
-            }
-        }
-        foreach ($value in $secretValues) {
-            if ($haystack.Contains($value)) {
-                throw "Значение секрета из secrets.env найдено в VETMO.exe"
-            }
-        }
-        Write-Host "OK: проверено секретов: $($secretValues.Count), в exe не найдено." -ForegroundColor Green
-    }
-    else {
-        Write-Host "secrets.env отсутствует — проверка значений секретов пропущена." -ForegroundColor Yellow
-    }
-    Remove-Variable bytes, haystack
+    Write-Step "Проверка, что VETMO-Admin.exe содержит admin/sync-код и без секретов"
+    Assert-ArchiveModules $AdminExe `
+        @() `
+        @("vetmo.admin", "vetmo.services.stratz_sync") `
+        "VETMO-Admin.exe"
+    Assert-NoSecretValues $AdminExe $secretValues "VETMO-Admin.exe"
 
     if (-not $SkipSmoke) {
-        Write-Step "Smoke-запуск VETMO.exe с чистым APPDATA"
-        Invoke-FileSmoke -ExePath $DistExe -Label "VETMO.exe" -WorkingDirectory (Split-Path $DistExe)
+        Write-Step "Smoke-запуск сборок"
+        Invoke-FileSmoke -ExePath $UserExe -Label "VETMO.exe" -WorkingDirectory (Split-Path $UserExe)
+        Invoke-AdminSelfCheck -ExePath $AdminExe -Label "VETMO-Admin.exe"
     }
 
     if ($SkipInstaller) {
-        Write-Step "Установщик пропущен (-SkipInstaller)"
+        Write-Step "Установщики пропущены (-SkipInstaller)"
         return
     }
 
-    Write-Step "Сборка установщика (Inno Setup)"
     $iscc = Find-Iscc $IsccPath
-    New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
-    $setupExe = Join-Path $ReleaseDir "VETMO-Setup-$Version.exe"
-    Remove-Item -LiteralPath $setupExe -Force -ErrorAction SilentlyContinue
-    Invoke-Checked $iscc @("/DMyAppVersion=$Version", (Join-Path $Root "installer\VETMO.iss")) "Inno Setup завершился с ошибкой"
-    if (-not (Test-Path -LiteralPath $setupExe)) {
-        throw "Установщик не создан: $setupExe"
-    }
+    $userSetup = Join-Path $ReleaseDir "VETMO-Setup-$Version.exe"
+    $adminSetup = Join-Path $ReleaseDir "VETMO-Admin-Setup-$Version.exe"
 
-    Write-Step "Проверка установщика: тихая установка -> запуск -> удаление"
-    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("vetmo-installer-" + [guid]::NewGuid().ToString("N"))
-    $installDir = Join-Path $tempRoot "app"
-    New-Item -ItemType Directory -Path $tempRoot | Out-Null
-    try {
-        $installArgs = @(
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/SP-",
-            "/NOICONS",
-            "/DIR=`"$installDir`""
-        )
-        $install = Start-Process -FilePath $setupExe -ArgumentList $installArgs -Wait -PassThru
-        if ($install.ExitCode -ne 0) {
-            throw "Установщик вернул код $($install.ExitCode)"
-        }
-        $installedExe = Join-Path $installDir "VETMO.exe"
-        if (-not (Test-Path -LiteralPath $installedExe)) {
-            throw "После установки не найден $installedExe"
-        }
-        if (-not $SkipSmoke) {
-            Invoke-FileSmoke -ExePath $installedExe -Label "Установленный VETMO.exe" -WorkingDirectory $installDir
-        }
-        $uninstaller = Join-Path $installDir "unins000.exe"
-        if (-not (Test-Path -LiteralPath $uninstaller)) {
-            throw "Не найден unins000.exe"
-        }
-        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
-            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
-        ) -Wait -PassThru
-        for ($i = 0; $i -lt 30 -and (Test-Path -LiteralPath $installDir); $i++) {
-            Start-Sleep -Milliseconds 500
-        }
-        if (Test-Path -LiteralPath $installDir) {
-            throw "Uninstaller не удалил каталог установки"
-        }
-        Write-Host "OK: установщик устанавливает и удаляет приложение." -ForegroundColor Green
-    }
-    finally {
-        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
+    Invoke-InstallerBuild $iscc "VETMO.iss" $userSetup "VETMO (пользователь)"
+    Invoke-InstallerBuild $iscc "VETMO-Admin.iss" $adminSetup "VETMO Admin"
+
+    Invoke-InstallerRoundTrip $userSetup "VETMO.exe" "VETMO (пользователь)"
+    Invoke-InstallerRoundTrip $adminSetup "VETMO-Admin.exe" "VETMO Admin" -Admin
 
     Write-Step "Контрольные суммы"
-    $sums = foreach ($file in @($DistExe, $setupExe)) {
+    $sums = foreach ($file in @($UserExe, $AdminExe, $userSetup, $adminSetup)) {
         $hash = Get-FileHash -LiteralPath $file -Algorithm SHA256
         "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), [IO.Path]::GetFileName($file)
     }
@@ -275,9 +417,11 @@ try {
     $sums | Set-Content -LiteralPath $sumsPath -Encoding ASCII
 
     Write-Step "Готово"
-    Write-Host "EXE:        $DistExe"
-    Write-Host "Установщик: $setupExe"
-    Write-Host "SHA256:     $sumsPath"
+    Write-Host "EXE (пользователь): $UserExe"
+    Write-Host "EXE (admin):        $AdminExe"
+    Write-Host "Установщик:         $userSetup"
+    Write-Host "Установщик admin:   $adminSetup"
+    Write-Host "SHA256:             $sumsPath"
 }
 finally {
     Pop-Location

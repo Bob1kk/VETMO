@@ -106,8 +106,8 @@ def _entry_names(cards: list) -> list[str]:
     return [card._name.text() for card in cards]
 
 
-def test_fill_shows_cards_for_positions_1_to_5(overlay_window) -> None:
-    """FR-004 (матрица): после fill есть карточки рекомендаций позиций 1..5."""
+def test_fill_shows_pick_slots_and_suggestions(overlay_window) -> None:
+    """FR-004: клетки 1..5 на команду и подсказки по выбранным героям."""
     window, settings_service, draft_service, smaker = overlay_window
     window.apply_snapshot(_make_vm(
         settings_service, draft_service, smaker).compute_all(limit=2))
@@ -119,12 +119,71 @@ def test_fill_shows_cards_for_positions_1_to_5(overlay_window) -> None:
     all_names = {_hero(hero_id).localized_name for hero_id in _HEROES}
     for team in ("_radiant", "_dire"):
         column = getattr(window, team)
+        assert sorted(column._slots) == [1, 2, 3, 4, 5]
         for position in range(1, 6):
-            names = _entry_names(column._cards[position])
-            assert any(name in all_names for name in names), (
-                f"{team} pos {position}: карточки без рекомендаций: {names}")
-    # приоритет позиции 1 — первым на карточке позиции 1 (Radiant)
-    assert window._radiant._cards[1][0]._name.text() == "Hero 100"
+            assert column._slots[position].hero() is None  # пока ничего не пикнули
+        names = _entry_names(column._cards)
+        assert any(name in all_names for name in names), (
+            f"{team}: подсказки пусты: {names}")
+    # приоритет позиции 1 — первым в подсказках Radiant
+    assert window._radiant._cards[0]._name.text() == "Hero 100"
+
+
+def test_pick_slot_click_requests_hero(overlay_window, qtbot) -> None:
+    """Клик по пустой клетке просит выбор героя (team, position)."""
+    window, settings_service, draft_service, smaker = overlay_window
+    window.apply_snapshot(_make_vm(
+        settings_service, draft_service, smaker).compute_all(limit=2))
+
+    # Диалог героя в тесте не открываем — фиксируем сам запрос.
+    calls: list[tuple[str, int]] = []
+    window._open_pick_dialog = (  # type: ignore[method-assign]
+        lambda team, position: calls.append((team, position)))
+
+    slot = window._radiant._slots[3]
+    qtbot.mouseClick(slot, Qt.MouseButton.LeftButton)
+    assert calls == [("radiant", 3)]
+
+
+def test_pick_slot_clear_button_requests_clear(overlay_window, qtbot) -> None:
+    """Крестик заполненной клетки просит убрать пик (team, position)."""
+    window, _, _, _ = overlay_window
+    slot = window._dire._slots[2]
+    slot.set_hero(_hero(100))
+    assert slot.hero() is not None
+    assert slot.property("filled") is True
+
+    with qtbot.waitSignal(window._dire.clear_clicked, timeout=3000) as blocker:
+        qtbot.mouseClick(slot._clear, Qt.MouseButton.LeftButton)
+    assert blocker.args == ["dire", 2]
+
+
+def test_fill_marks_picked_hero_in_slot(overlay_window) -> None:
+    """Пикнутый герой занимает клетку, а не карточку подсказки."""
+    window, settings_service, draft_service, smaker = overlay_window
+    state = draft_service.add_pick("radiant", 1, 105)
+    assert state.picks
+
+    window.apply_snapshot(_make_vm(
+        settings_service, draft_service, smaker).compute_all(limit=2))
+
+    slot = window._radiant._slots[1]
+    assert slot.hero() is not None
+    assert slot.hero().id == 105
+    assert slot.property("filled") is True
+    assert window._radiant._count.text() == "1/5"
+
+
+def test_drag_header_reports_position(overlay_window, qtbot) -> None:
+    """Шапка «сообщает» позицию после отпускания мыши (сохранение настроек)."""
+    window, settings_service, _, _ = overlay_window
+    window.move(140, 90)
+
+    with qtbot.waitSignal(window.position_changed, timeout=3000) as blocker:
+        window._header._emit_position()
+    x, y = blocker.args
+    assert x >= 0 and y >= 0
+    assert isinstance(x, int) and isinstance(y, int)
 
 
 def test_fill_dire_column_respects_show_dire_setting(overlay_window) -> None:

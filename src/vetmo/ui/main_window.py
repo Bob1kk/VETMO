@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QTabWidget,
     QVBoxLayout,
@@ -79,6 +80,10 @@ class MainWindow(QMainWindow):
         self._overlay.refresh_requested.connect(self._refresh_overlay)
         self._overlay.settings_requested.connect(self._open_overlay_settings)
         self._overlay.set_matchup_loader(self._matchup_loader)
+        self._overlay.set_heroes_loader(context.all_heroes)
+        self._overlay.pick_requested.connect(self._on_overlay_pick)
+        self._overlay.clear_requested.connect(self._on_overlay_clear)
+        self._overlay.position_changed.connect(self._on_overlay_moved)
         self._meta_widget.set_matchup_loader(self._matchup_loader)
         self._meta_widget.set_matchup_details_loader(
             self._matchup_details_loader)
@@ -563,6 +568,39 @@ class MainWindow(QMainWindow):
             self.status(f"Пик не принят: {message}")
 
         start_worker(job, on_done=done, on_fail=fail)
+
+    # ------------------------------------------------- доска оверлея -------
+    def _on_overlay_pick(self, team: str, position: int, hero_id: int) -> None:
+        """Пик из клетки оверлея: запись в произвольную ячейку (worker)."""
+        def job():
+            return self._ctx.draft_service.set_pick(team, position, hero_id)
+
+        def done(_state) -> None:
+            self.status(
+                f"Пик записан: {team} · позиция {position}. Подсказки обновляются…")
+            self._refresh_overlay()
+
+        def fail(message: str) -> None:
+            self.status(f"Пик не принят: {message}")
+            QMessageBox.warning(self, "Пик не принят", message)
+
+        start_worker(job, on_done=done, on_fail=fail)
+
+    def _on_overlay_clear(self, team: str, position: int) -> None:
+        """Убирает пик из клетки оверлея (worker)."""
+        def job():
+            return self._ctx.draft_service.clear_pick(team, position)
+
+        def done(_state) -> None:
+            self.status(f"Клетка очищена: {team} · позиция {position}")
+            self._refresh_overlay()
+
+        start_worker(job, on_done=done, on_fail=self._default_fail)
+
+    def _on_overlay_moved(self, x: int, y: int) -> None:
+        """Перетаскивание оверлея: сохраняем позицию в настройках."""
+        self._commit_setting("position", (x, y))
+        self.status(f"Позиция оверлея сохранена: {x}, {y}")
 
     # -------------------------------------------------------------- close --
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
