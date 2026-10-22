@@ -23,12 +23,11 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from vetmo.data.db import create_db
 from vetmo.data.repositories.hero_repo import HeroRepository
-from vetmo.data.repositories.meta_repo import MetaRepository
 from vetmo.data.supabase_heroes import load_seed_heroes
 from vetmo.domain.rank_brackets import ALL_BRACKET, BASIC_BRACKETS
 from vetmo.infra.config import Settings
@@ -75,9 +74,79 @@ def _service_gateway(sync: SyncSettings) -> SupabaseGateway:
     return SupabaseGateway(settings)
 
 
+def _as_int(value: object) -> int | None:
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
+
+
 def _upsert(gateway: SupabaseGateway, table: str, rows: list[dict[str, Any]], conflict: str) -> None:
     if rows:
         gateway.upsert(table, rows, on_conflict=conflict)
+
+
+def _resolve_patch(gateway: SupabaseGateway, patch_version: str) -> int:
+    """Вернуть id патча в Supabase для версии OpenDota.
+
+    OpenDota отдаёт базовую версию (``7.41``), а в Supabase текущий патч
+    ``7.41f`` (id=190). Мапим по базовой версии, не создаём дубликат.
+    """
+    base = str(patch_version).split(" ")[0]
+    patches = gateway.select(
+        "vetmo_patches", columns="id,version,is_current", order=("id", True),
+    )
+    matching = [
+        r for r in patches if str(r.get("version") or "").startswith(base)
+    ]
+    if matching:
+        # Предпочитаем текущий, затем самый свежий по id.
+        matching.sort(
+            key=lambda r: (bool(r.get("is_current")), _as_int(r.get("id")) or 0),
+            reverse=True,
+        )
+        return _as_int(matching[0]["id"]) or 0
+    inserted = gateway.insert("vetmo_patches", [{
+        "version": patch_version, "game_version_id": None,
+        "release_date": None, "is_current": True, "source": "opendota",
+    }])
+    return _as_int(inserted[0]["id"]) or 0
+
+
+def _previous_snapshot_map(
+    gateway: SupabaseGateway, patch_id: int, snapshot_date: date,
+) -> dict[tuple[int, int], dict[str, Any]]:
+    """Словарь (hero_id, rank_tier) -> строка ближайшего снапшота не моложе 7 дней."""
+    cutoff = (snapshot_date - timedelta(days=7)).isoformat()
+    dates = gateway.select(
+        "vetmo_snapshots", columns="snapshot_date",
+        filters={
+            "source": "opendota",
+            "patch_id": patch_id,
+            "snapshot_date": ("lte", cutoff),
+        },
+        order=("snapshot_date", True), limit=1,
+    )
+    if not dates:
+        return {}
+    prev_date = str(dates[0]["snapshot_date"])
+    rows = gateway.select(
+        "vetmo_snapshots", columns="hero_id,rank_tier,win_rate,pick_rate",
+        filters={
+            "source": "opendota",
+            "patch_id": patch_id,
+            "snapshot_date": prev_date,
+        },
+        limit=10000,
+    )
+    result: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in rows:
+        hid = _as_int(row.get("hero_id"))
+        rt = _as_int(row.get("rank_tier"))
+        if hid is None or rt is None:
+            continue
+        result[(hid, rt)] = row
+    return result
 
 
 def sync_opendota_meta(
@@ -89,13 +158,19 @@ def sync_opendota_meta(
 ) -> SyncStats:
     """Синхронизирует основную мету из OpenDota heroStats.
 
-    Этап 1 — OpenDota API -> локальная SQLite (vetmo.db): герои +
-    meta_snapshots (через OpenDotaClient.sync_heroes).
-    Этап 2 — локальная SQLite -> Supabase: vetmo_heroes, vetmo_patches,
-    vetmo_meta (денормализованно: герой + снэпшот).
+    Пишет в Supabase:
+      * vetmo_heroes — справочник героев;
+      * vetmo_patches — патч OpenDota, смapped на текущий патч Supabase
+        по базовой версии (7.41 -> 7.41f);
+      * vetmo_meta — по одной строке на (герой, ранг 0..7, позиция 0),
+        window_days=7, source='opendota', ban_rate=None;
+      * vetmo_snapshots — ежедневный снапшот для расчёта дельт.
 
-    Не требует токена API. service_role используется только для записи в
-    Supabase; приложение его не получает.
+    Дельты — относительное изменение (%) к ближайшему снапшоту не моложе
+    7 дней назад (как в Dotabuff — сравнение с предыдущей неделей).
+    Если история ещё не накопилась — ``None`` (отображается как «—»).
+
+    Не требует токена API. service_role только для записи в Supabase.
     """
     sync = SyncSettings.load()
     stats = SyncStats(source="opendota")
@@ -113,80 +188,117 @@ def sync_opendota_meta(
     gateway = None if dry_run else _service_gateway(sync)
 
     try:
-        # --- Этап 1: OpenDota API -> локальная SQLite ---
+        # --- Сырые heroStats (один запрос) ---
+        raw = client.fetch_hero_stats()
+        if not isinstance(raw, list) or not raw:
+            raise RuntimeError("OpenDota heroStats пуст или недоступен")
         patch_version, patch_date = client.latest_patch()
         stats.patch_version = patch_version
-        progress(f"OpenDota патч: {patch_version}")
+        progress(f"OpenDota патч: {patch_version}; героев: {len(raw)}")
 
-        sync_result = client.sync_heroes(limit=0)
-        stats.rows_meta = sync_result.ok
-        progress(
-            f"Герои: ok={sync_result.ok}, "
-            f"quarantined={sync_result.quarantined}, "
-            f"total={sync_result.total}"
-        )
+        # Поддерживаем локальную БД в актуальном состоянии (offline-резерв).
+        client.sync_heroes(limit=0, data=raw)
 
-        # --- Этап 2: локальная SQLite -> Supabase ---
-        if gateway is not None:
-            with sessionmaker() as session:
-                heroes = HeroRepository(session).get_all()
-                snapshots = MetaRepository(session).get_top_meta(limit=10000)
-                latest_patch_id = MetaRepository(session).latest_patch_id()
+        if gateway is None:
+            return stats
 
-            stats.patch_id = latest_patch_id
+        # --- Патч в Supabase: OpenDota 7.41 -> текущий 7.41f (id=190) ---
+        patch_id = _resolve_patch(gateway, patch_version)
+        stats.patch_id = patch_id
+        progress(f"Supabase патч id={patch_id} ({patch_version})")
 
-            # Герои -> vetmo_heroes
-            if heroes:
-                _upsert(
-                    gateway, "vetmo_heroes",
-                    hero_rows(heroes), "id",
-                )
-                progress(f"  vetmo_heroes: {len(heroes)} строк")
+        # --- Герои -> vetmo_heroes ---
+        with sessionmaker() as session:
+            heroes = HeroRepository(session).get_all()
+        if heroes:
+            _upsert(gateway, "vetmo_heroes", hero_rows(heroes), "id")
+            progress(f"  vetmo_heroes: {len(heroes)} строк")
 
-            # Патч -> vetmo_patches
-            if patch_version:
-                _upsert(
-                    gateway, "vetmo_patches",
-                    [{"id": 0, "game_version_id": 0, "version": patch_version,
-                      "release_date": None, "is_current": True, "source": "opendota"}],
-                    "id",
-                )
-                progress(f"  vetmo_patches: {patch_version}")
+        # --- Мета -> vetmo_meta ---
+        total_pub_pick = sum(float(r.get("pub_pick") or 0) for r in raw)
+        tier_totals = {
+            tier: sum(float(r.get(f"{tier}_pick") or 0) for r in raw)
+            for tier in range(1, 8)
+        }
+        totals = {0: total_pub_pick, **tier_totals}
 
-            # Мета -> vetmo_meta (денормализованно)
-            meta_rows: list[dict[str, Any]] = []
-            for row in snapshots:
-                hero = row.hero
-                meta_rows.append({
-                    "hero_id": row.hero_id,
-                    "name": hero.localized_name or row.name or f"hero_{row.hero_id}",
-                    "internal_name": row.name or hero.name or f"hero_{row.hero_id}",
-                    "icon_url": hero.icon_url if hero else None,
-                    "primary_attr": hero.primary_attr if hero else "",
-                    "attack_type": hero.attack_type if hero else "",
-                    "win_rate": row.win_rate,
-                    "pick_rate": row.pick_rate,
-                    "ban_rate": row.ban_rate,
-                    "delta_win": row.delta_win,
-                    "delta_pick": row.delta_pick,
-                    "delta_ban": row.delta_ban,
-                    "patch_version": row.patch_version or patch_version,
-                    "match_count": row.match_count,
-                    "ban_scope": None,
-                    "sample_reliable": row.sample_reliable,
-                    "source": "opendota",
-                    "positions": row.positions,
-                    "rank_tier": None,
+        snapshot_date = datetime.now(UTC).date()
+        meta_rows: list[dict[str, Any]] = []
+        snapshot_rows: list[dict[str, Any]] = []
+
+        for record in raw:
+            hero_id = _as_int(record.get("id"))
+            if hero_id is None or hero_id <= 0:
+                continue
+
+            for rank_tier in (0, *range(1, 8)):
+                if rank_tier == 0:
+                    pick = float(record.get("pub_pick") or 0)
+                    win = float(record.get("pub_win") or 0)
+                    total = totals[0]
+                else:
+                    pick = float(record.get(f"{rank_tier}_pick") or 0)
+                    win = float(record.get(f"{rank_tier}_win") or 0)
+                    total = totals[rank_tier]
+                if pick <= 0 or total <= 0:
+                    continue
+
+                win_rate = round(max(0.0, min(100.0, 100.0 * win / pick)), 2)
+                pick_rate = round(max(0.0, min(100.0, 1000.0 * pick / total)), 2)
+                match_count = int(pick)
+                win_count = int(win)
+                sample_reliable = match_count >= 50
+
+                base = {
+                    "patch_id": patch_id, "hero_id": hero_id,
+                    "rank_tier": rank_tier, "position": 0,
+                    "game_mode": "ALL_PICK_RANKED", "window_days": 7,
+                    "match_count": match_count, "win_count": win_count,
+                    "win_rate": win_rate, "pick_rate": pick_rate,
+                    "ban_rate": None, "pick_share": None,
+                    "is_popular": False, "sample_reliable": sample_reliable,
+                    "delta_win": None, "delta_pick": None, "delta_ban": None,
+                    "ban_scope": None, "source": "opendota",
+                }
+                meta_rows.append(dict(base))
+                snapshot_rows.append({
+                    "snapshot_date": snapshot_date.isoformat(), **base,
                 })
-            if meta_rows:
-                _upsert(
-                    gateway, "vetmo_meta",
-                    meta_rows,
-                    "patch_id,hero_id,rank_tier",
-                )
-                progress(f"  vetmo_meta: {len(meta_rows)} строк")
 
-        # quarantine-флаг отражается в stats.errors при необходимости
+        # --- Дельты: относительное изменение к снапшоту ~7 дней назад ---
+        prev = _previous_snapshot_map(gateway, patch_id, snapshot_date)
+        def _prev_float(row: dict[str, Any], key: str) -> float:
+            try:
+                return float(row.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        for row in meta_rows:
+            key = (row["hero_id"], row["rank_tier"])
+            if key not in prev:
+                continue
+            pw = _prev_float(prev[key], "win_rate")
+            pp = _prev_float(prev[key], "pick_rate")
+            cw = row["win_rate"]
+            cp = row["pick_rate"]
+            if pw and pw > 0:
+                row["delta_win"] = round((cw - pw) / pw * 100.0, 2)
+            if pp and pp > 0:
+                row["delta_pick"] = round((cp - pp) / pp * 100.0, 2)
+
+        # --- Запись в Supabase ---
+        _upsert(
+            gateway, "vetmo_meta", meta_rows,
+            "patch_id,hero_id,rank_tier,position,game_mode,window_days",
+        )
+        progress(f"  vetmo_meta: {len(meta_rows)} строк")
+        _upsert(
+            gateway, "vetmo_snapshots", snapshot_rows,
+            "snapshot_date,patch_id,hero_id,rank_tier,position,game_mode,window_days",
+        )
+        progress(f"  vetmo_snapshots: {len(snapshot_rows)} строк")
+        stats.rows_meta = len(meta_rows)
+        return stats
 
     except Exception as exc:  # noqa: BLE001
         stats.errors.append(f"{type(exc).__name__}: {exc}")

@@ -35,32 +35,26 @@ if TYPE_CHECKING:
 _DEBOUNCE_MS = 350
 
 _RANKS: tuple[tuple[int, str], ...] = (
-    (1, "Рекрут"),
-    (2, "Страж"),
-    (3, "Рыцарь"),
-    (4, "Герой"),
-    (5, "Легенда"),
-    (6, "Властелин"),
-    (7, "Божество"),
-    (8, "Титан"),
+    (1, "Рекрут (Herald)"),
+    (2, "Страж (Guardian)"),
+    (3, "Рыцарь (Crusader)"),
+    (4, "Герой (Archon)"),
+    (5, "Легенда (Legend)"),
+    (6, "Властелин (Ancient)"),
+    (7, "Божество (Divine)"),
 )
 
-_POSITIONS: tuple[tuple[int, str], ...] = (
-    (1, "1 — Керри"),
-    (2, "2 — Мид"),
-    (3, "3 — Оффлейн"),
-    (4, "4 — Роумер"),
-    (5, "5 — Поддержка"),
-)
+# OpenDota не отдаёт позиции героев, поэтому позиционный срез недоступен.
+_POSITIONS: tuple[tuple[int, str], ...] = ()
 
 _HEADERS = (
     "Герой",
     "Winrate",
+    "Δ Winrate",
     "Pickrate",
+    "Δ Pickrate",
     "Banrate",
     "Матчи",
-    "Δ Winrate",
-    "Δ Pickrate",
 )
 
 
@@ -106,7 +100,9 @@ class MetaTab(QWidget):
         title = QLabel("Мета", self)
         title.setObjectName("h1")
         subtitle = QLabel(
-            "Свежий патч, окно 7 дней. «Все ранги/позиции» — агрегированный срез 0.",
+            "Источник меты: OpenDota · последние 7 дней · Ranked All Pick · все позиции. "
+            "Банов по героям OpenDota не отдаёт (только про-сцену). "
+            "Для сравнения с Dotabuff выберите «Все позиции».",
             self,
         )
         subtitle.setObjectName("muted")
@@ -117,12 +113,6 @@ class MetaTab(QWidget):
         self._rank.addItem("Все ранги", 0)
         for value, label in _RANKS:
             self._rank.addItem(f"{value} — {label}", value)
-
-        self._position = QComboBox(self)
-        self._position.setObjectName("filterCombo")
-        self._position.addItem("Все позиции", 0)
-        for value, label in _POSITIONS:
-            self._position.addItem(label, value)
 
         self._search = QLineEdit(self)
         self._search.setObjectName("search")
@@ -137,8 +127,6 @@ class MetaTab(QWidget):
         filters.setSpacing(8)
         filters.addWidget(QLabel("Ранг:", self))
         filters.addWidget(self._rank)
-        filters.addWidget(QLabel("Позиция:", self))
-        filters.addWidget(self._position)
         filters.addWidget(self._search, 1)
         filters.addWidget(self._apply_button)
 
@@ -164,7 +152,6 @@ class MetaTab(QWidget):
         layout.addWidget(self._table, 1)
 
         self._rank.currentIndexChanged.connect(self._schedule)
-        self._position.currentIndexChanged.connect(self._schedule)
         self._search.textChanged.connect(self._schedule)
         self._search.returnPressed.connect(self.reload)
 
@@ -173,12 +160,11 @@ class MetaTab(QWidget):
         self._timer.start()
 
     # -------------------------------------------------------------- данные --
-    def filters(self) -> tuple[int, int, str | None]:
-        """Выбранные фильтры: (rank_tier, position, search)."""
+    def filters(self) -> tuple[int, str | None]:
+        """Выбранные фильтры: (rank_tier, search). Позиция всегда «все» (0)."""
         rank = int(self._rank.currentData() or 0)
-        position = int(self._position.currentData() or 0)
         search = self._search.text().strip() or None
-        return rank, position, search
+        return rank, search
 
     def reload(self) -> None:
         """Запрашивает строки меты в фоне; устаревшие ответы игнорируются."""
@@ -188,7 +174,7 @@ class MetaTab(QWidget):
         self._loading = True
         self._state.setText("Загрузка меты…")
         self._state.setStyleSheet("")
-        rank, position, search = self.filters()
+        rank, search = self.filters()
         self.status_message.emit("Мета: читаем Supabase…")
 
         def done(rows: list[dict[str, Any]]) -> None:
@@ -211,7 +197,7 @@ class MetaTab(QWidget):
         start_worker(
             self._ctx.repository.meta_rows,
             rank,
-            position,
+            None,
             search,
             on_done=done,
             on_fail=fail,
@@ -246,8 +232,20 @@ class MetaTab(QWidget):
                         align_right=True,
                     ),
                     make_item(
+                        format_delta(row.get("delta_win")),
+                        sort_value=as_float(row.get("delta_win"), -999.0),
+                        color=_delta_color(row.get("delta_win")),
+                        align_right=True,
+                    ),
+                    make_item(
                         format_rate(pick),
                         sort_value=pick if pick is not None else -1.0,
+                        align_right=True,
+                    ),
+                    make_item(
+                        format_delta(row.get("delta_pick")),
+                        sort_value=as_float(row.get("delta_pick"), -999.0),
+                        color=_delta_color(row.get("delta_pick")),
                         align_right=True,
                     ),
                     make_item(
@@ -258,18 +256,6 @@ class MetaTab(QWidget):
                     make_item(
                         format_int(matches),
                         sort_value=matches or 0,
-                        align_right=True,
-                    ),
-                    make_item(
-                        format_delta(row.get("delta_win")),
-                        sort_value=as_float(row.get("delta_win"), -999.0),
-                        color=_delta_color(row.get("delta_win")),
-                        align_right=True,
-                    ),
-                    make_item(
-                        format_delta(row.get("delta_pick")),
-                        sort_value=as_float(row.get("delta_pick"), -999.0),
-                        color=_delta_color(row.get("delta_pick")),
                         align_right=True,
                     ),
                 ]

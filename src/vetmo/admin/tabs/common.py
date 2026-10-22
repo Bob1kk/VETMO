@@ -61,11 +61,11 @@ def format_rate(value: object) -> str:
 
 
 def format_delta(value: object) -> str:
-    """Дельта со знаком; прочерк, если данных нет."""
+    """Относительная дельта со знаком и процентами; прочерк, если данных нет."""
     number = as_float(value)
     if number is None:
         return "—"
-    return f"{number:+.2f}"
+    return f"{number:+.2f}%"
 
 
 def format_datetime(value: object) -> str:
