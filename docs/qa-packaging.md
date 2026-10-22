@@ -65,13 +65,15 @@
 
 | Файл | Размер, байт | Размер, МиБ | SHA256 |
 |---|---:|---:|---|
-| `dist/VETMO.exe` | 67 566 560 | 64,44 | `c541f2589346f0f944593a7871ad24d0d320de7b5b2efc8992fc6e32c386e590` |
-| `dist/VETMO-Admin.exe` | 69 374 565 | 66,16 | `89acc971dc43c26f6c341d7b6ab8c022336ec5ba14d8468def5f67c992942baf` |
-| `release/VETMO-Setup-0.1.0.exe` | 68 666 414 | 65,49 | `c4c0f99b49d639717b683d682711230527b912c87281cc1b35aab76d9b7eb09d` |
-| `release/VETMO-Admin-Setup-0.1.0.exe` | 70 602 171 | 67,33 | `b0466044dc7cb99ba9d1fd8ac92618fe308799b0ce6f6588a529bded79323e57` |
+| `dist/VETMO.exe` | 67 567 628 | 64,44 | `b7ac896dff1596e1a958c096b8bec38fa0a67f100bff14e07cc20bb47b6b1397` |
+| `dist/VETMO-Admin.exe` | 69 374 100 | 66,16 | `ac78d653d27d7b3c20d89e2c95d18cbf7714dba29903dd2fd6e4cd1b4cdcdee1` |
+| `release/VETMO-Setup-0.1.0.exe` | 68 667 404 | 65,49 | `578c106f42003995749e477ab3ba8365595ed6434987b9673aff9dd61919aaa6` |
+| `release/VETMO-Admin-Setup-0.1.0.exe` | 70 601 884 | 67,33 | `4c26d260d31ed4bd2a6136d7906771608dc18f5446c98054d7f30fc5b1e499eb` |
 
 Те же значения записаны скриптом в `release/SHA256SUMS.txt`.
-`release/` и `dist/` не коммитятся (`.gitignore`).
+Установщики и `SHA256SUMS.txt` коммитятся в ветку (исключение в `.gitignore`),
+чтобы пользователи скачивали их прямо из `release/`; `dist/` и `build/`
+не коммитятся.
 
 ## Проверка состава `dist/VETMO.exe`
 
