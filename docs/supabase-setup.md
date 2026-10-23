@@ -1,8 +1,9 @@
 # Supabase setup для VETMO 0.2
 
-Проект: `https://qtqntybxwwhggqimkxpi.supabase.co`  
-Все таблицы VETMO имеют префикс `vetmo_`, чтобы не пересекаться с уже существующими
-`allowed_teachers`, `profiles`, `substitution`, `substitutions`, `users`.
+Проект: `https://<project-ref>.supabase.co`
+
+Все таблицы VETMO имеют префикс `vetmo_`, чтобы не пересекаться с другими
+таблицами проекта.
 
 ## 1. Применить схему
 
@@ -36,7 +37,7 @@ Dashboard → **Authentication** → **Providers** → **Anonymous** → Enable.
 В `.env` проекта:
 
 ```dotenv
-VETMO_SUPABASE_URL=https://qtqntybxwwhggqimkxpi.supabase.co
+VETMO_SUPABASE_URL=https://<project-ref>.supabase.co
 VETMO_SUPABASE_ANON_KEY=sb_publishable_...
 ```
 
@@ -48,7 +49,7 @@ VETMO_SUPABASE_ANON_KEY=sb_publishable_...
 В `%APPDATA%\VETMO\secrets.env` (вне OneDrive, не в git):
 
 ```dotenv
-VETMO_SYNC_SUPABASE_URL=https://qtqntybxwwhggqimkxpi.supabase.co
+VETMO_SYNC_SUPABASE_URL=https://<project-ref>.supabase.co
 VETMO_SYNC_SERVICE_KEY=...
 VETMO_SYNC_STRATZ_TOKEN=...
 ```
@@ -78,8 +79,10 @@ values (99999, 'npc_dota_hero_test', 'Test');
 ## 5. Sync
 
 ```powershell
-.\.venv\Scripts\python.exe -m vetmo.tools.sync_stratz --full --dry-run
-.\.venv\Scripts\python.exe -m vetmo.tools.sync_stratz --full
+.\.venv\Scripts\python.exe tools\sync_opendota.py --dry-run
+.\.venv\Scripts\python.exe tools\sync_opendota.py
+.\.venv\Scripts\python.exe tools\sync_stratz.py --dry-run
+.\.venv\Scripts\python.exe tools\sync_stratz.py
 ```
 
 Первый запуск заполняет `vetmo_patches`, `vetmo_meta`, `vetmo_snapshots`,
@@ -102,4 +105,6 @@ values (99999, 'npc_dota_hero_test', 'Test');
   честно из `vetmo_snapshots.snapshot_date`.
 - `metaTrend` и `ratings` в фактическом API отсутствуют.
 - Баны — из `banDay` за 7 дней; ban rate считается на 10 банов на матч.
-- Подробности — в `docs/stratz-actual-schema-notes.md`.
+- Семантика `matchCount` зависит от позиции: для `position=0` в матче 10
+  герой-слотов (`sum(matchCount) / 10`), для `position>0` — один
+  (`sum(matchCount)`).

@@ -108,8 +108,7 @@ def aggregate_win_day(
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Строки vetmo_meta + дата снимка (последний доступный день).
 
-    Семантика matchCount STRATZ (верified по live-интроспекции, см.
-    docs/stratz-actual-schema-notes.md):
+    Семантика matchCount STRATZ (проверена по live-интроспекции API):
       - position == 0 (все позиции): в матче 10 герой-слотов ->
         total_matches = sum(matchCount) / 10
       - position > 0: на матче 1 герой на позицию ->
