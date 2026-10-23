@@ -178,6 +178,21 @@ class DraftService:
             candidates.sort(key=lambda t: (-t[1], t[0].localized_name))
             return candidates[:limit]
 
+    def get_recommendations_for(
+        self, state: DraftSession | None, position: int,
+        limit: int = 5, team: Team | None = None,
+    ) -> list[tuple[Hero, float]]:
+        """Рекомендации по уже загруженному состоянию (без повторного чтения).
+
+        ``state=None`` — базовая линия без пиков (контр-пик Δ в оверлее).
+        """
+        return self.get_recommendations(
+            position,
+            state.id if state is not None else None,
+            limit=limit,
+            team=team,
+        )
+
     def get_matchup_tooltip(
         self, hero_id: int,
     ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]] | None:

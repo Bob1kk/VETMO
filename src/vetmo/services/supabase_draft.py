@@ -467,15 +467,6 @@ class SupabaseDraftService:
         limit: int = 5, team: Team | None = None,
     ) -> list[tuple[Hero, float]]:
         """[(Hero, score)] по убыванию: мета + приоритет + позиционный фит."""
-        if not 1 <= position <= 5:
-            raise ValueError(f"Позиция вне 1..5: {position}")
-        if limit <= 0:
-            return []
-        heroes = self._heroes.get_all()
-        if not heroes:
-            return []
-        picked: set[int] = set()
-        enemy_ids: set[int] = set()
         state = None
         if session_id is not None:
             try:
@@ -487,6 +478,27 @@ class SupabaseDraftService:
                 state = self.get_state()
             except Exception:  # noqa: BLE001
                 state = None
+        return self.get_recommendations_for(
+            state, position, limit=limit, team=team)
+
+    def get_recommendations_for(
+        self, state: DraftSession | None, position: int,
+        limit: int = 5, team: Team | None = None,
+    ) -> list[tuple[Hero, float]]:
+        """Рекомендации по уже загруженному состоянию — без сетевого get_state.
+
+        ``state=None`` — базовая линия без учёта пиков: нужна оверлею, чтобы
+        посчитать Δ контр-пика, не делая лишних запросов к Supabase.
+        """
+        if not 1 <= position <= 5:
+            raise ValueError(f"Позиция вне 1..5: {position}")
+        if limit <= 0:
+            return []
+        heroes = self._heroes.get_all()
+        if not heroes:
+            return []
+        picked: set[int] = set()
+        enemy_ids: set[int] = set()
         if state is not None:
             picked = {p.hero_id for p in state.picks}
             perspective = team or _team_on_clock(state)

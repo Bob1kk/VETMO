@@ -139,12 +139,12 @@ class OverlayViewModel:
         limit: int,
     ) -> list[OverlayEntry]:
         """Рекомендации позиции с причинами (приоритет > контр-пик > мета)."""
-        recs = self._draft.get_recommendations(
-            position, state.id, limit, team=team)
+        recs = self._draft.get_recommendations_for(
+            state, position, limit=limit, team=team)
         baseline: dict[int, float] = {}
         if opponents:
-            base = self._draft.get_recommendations(
-                position, None, limit=_LARGE_LIMIT,
+            base = self._draft.get_recommendations_for(
+                None, position, limit=_LARGE_LIMIT,
             )
             baseline = {hero.id: score for hero, score in base}
         entries: list[OverlayEntry] = []

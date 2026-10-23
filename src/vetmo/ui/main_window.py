@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMessageBox,
     QPushButton,
     QTabWidget,
     QVBoxLayout,
@@ -28,7 +27,6 @@ from vetmo.ui.settings_panel import SettingsPanel
 from vetmo.ui.theme import theme_for
 from vetmo.ui.viewmodels.main_viewmodel import MainViewModel
 from vetmo.ui.viewmodels.overlay_vm import OverlaySnapshot, OverlayViewModel
-from vetmo.ui.widgets.manual_pick_dialog import ManualPickDialog
 from vetmo.ui.widgets.meta_report import MetaReportWidget
 from vetmo.ui.widgets.news_widget import NewsWidget
 from vetmo.ui.widgets.priorities_dialog import PrioritiesDialog
@@ -97,7 +95,6 @@ class MainWindow(QMainWindow):
         self._status_label = _status_label("Готово")
         self._toggle_overlay = QPushButton("Запустить оверлей", self)
         self._toggle_overlay.setObjectName("bigOverlay")
-        self._manual_dialog: ManualPickDialog | None = None
         self._priorities_open = False
         self._overlay_visible = False
         self._overlay_busy = False
@@ -112,8 +109,8 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- UI --
     def _build_ui(self) -> None:
         self.setWindowTitle("VETMO — помощник драфта Dota 2")
-        self.setMinimumSize(1180, 700)
-        self.resize(1280, 800)
+        self.setMinimumSize(1240, 700)
+        self.resize(1360, 800)
 
         self._settings_panel.settings_committed.connect(self._commit_setting)
         self._settings_panel.priorities_requested.connect(
@@ -122,10 +119,6 @@ class MainWindow(QMainWindow):
         self._settings_panel.overlay_toggle_requested.connect(
             self._toggle_overlay_clicked)
 
-        new_session = QPushButton("Новая сессия", self)
-        new_session.setObjectName("headerGhost")
-        new_session.setToolTip("Начать драфт с шага 0/10")
-        new_session.clicked.connect(self._start_draft_session)
         refresh_db = QPushButton("Обновить из БД", self)
         refresh_db.setObjectName("headerGhost")
         refresh_db.setToolTip(
@@ -133,10 +126,6 @@ class MainWindow(QMainWindow):
             "запись выполняет VETMO Admin.")
         refresh_db.clicked.connect(self._refresh_from_db)
         self._refresh_db_button = refresh_db
-        manual = QPushButton("Ручной пик…", self)
-        manual.setObjectName("headerGhost")
-        manual.setToolTip("Записать пик вручную")
-        manual.clicked.connect(self._open_manual_pick)
         self._toggle_overlay.clicked.connect(self._toggle_overlay_clicked)
 
         header = QFrame(self)
@@ -165,8 +154,6 @@ class MainWindow(QMainWindow):
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)
         header_layout.addWidget(refresh_db)
-        header_layout.addWidget(new_session)
-        header_layout.addWidget(manual)
         header_layout.addWidget(self._toggle_overlay)
 
         self._sidebar_tabs = QTabWidget(self)
@@ -498,80 +485,14 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------- драфт --
-    def _start_draft_session(self) -> None:
-        """Новая сессия драфта (шаг 0/10)."""
-        start_worker(
-            self._ctx.draft_service.start_session,
-            on_done=self._after_new_session,
-            on_fail=self._default_fail,
-        )
-
-    def _after_new_session(self, _state) -> None:
-        self.status("Новая сессия драфта начата (шаг 0/10)")
-        if self._manual_dialog is not None:
-            self._load_manual_state()
-        self._refresh_overlay()
-
-    # --------------------------------------------------------- manual pick --
-    def _open_manual_pick(self) -> None:
-        """T-013: диалог выбора героя (каталог из worker)."""
-        if self._manual_dialog is not None:
-            self._manual_dialog.raise_()
-            self._manual_dialog.show()
-            self._load_manual_state()
-            return
-        start_worker(
-            self._ctx.all_heroes,
-            on_done=self._manual_dialog_ready,
-            on_fail=self._default_fail,
-        )
-
-    def _manual_dialog_ready(self, heroes: list) -> None:
-        """Создаёт диалог из каталога героев (пустой каталог -> подсказка)."""
-        if not heroes:
-            self.status(
-                "Ручной ввод: каталог пуст — обновите данные в настройках.")
-            return
-        dialog = ManualPickDialog(heroes, self)
-        dialog.pick_requested.connect(self._on_pick_requested)
-        dialog.finished.connect(
-            lambda _=None: setattr(self, "_manual_dialog", None))
-        self._manual_dialog = dialog
-        self._load_manual_state()
-        dialog.show()
-
-    def _load_manual_state(self) -> None:
-        """Текущий шаг/команда драфта в открытый диалог."""
-        if self._manual_dialog is None:
-            return
-        start_worker(
-            self._vm.fetch_draft_state,
-            on_done=self._manual_dialog.show_state,
-            on_fail=self._default_fail,
-        )
-
-    def _on_pick_requested(self, position, hero_id: int) -> None:
-        """Добавляет пик через DraftService.add_pick_auto (worker)."""
-
-        def job():
-            return self._ctx.draft_service.add_pick_auto(position, hero_id)
-
-        def done(_state) -> None:
-            self.status("Пик записан. Рекомендации обновляются…")
-            if self._manual_dialog is not None:
-                self._load_manual_state()
-            self._refresh_overlay()
-
-        def fail(message: str) -> None:
-            if self._manual_dialog is not None:
-                self._manual_dialog.on_fail(message)
-            self.status(f"Пик не принят: {message}")
-
-        start_worker(job, on_done=done, on_fail=fail)
-
     # ------------------------------------------------- доска оверлея -------
     def _on_overlay_pick(self, team: str, position: int, hero_id: int) -> None:
         """Пик из клетки оверлея: запись в произвольную ячейку (worker)."""
+        hero = self._ctx.get_hero_by_id(hero_id)
+        if hero is not None:
+            # Оптимистично: клетка обновляется сразу, рекомендации — позже.
+            self._overlay.apply_pick(team, position, hero)
+
         def job():
             return self._ctx.draft_service.set_pick(team, position, hero_id)
 
@@ -581,13 +502,17 @@ class MainWindow(QMainWindow):
             self._refresh_overlay()
 
         def fail(message: str) -> None:
+            # Без модального QMessageBox: он открывался позади оверлея и
+            # блокировал всё приложение (выглядело как зависание).
             self.status(f"Пик не принят: {message}")
-            QMessageBox.warning(self, "Пик не принят", message)
+            self._refresh_overlay()
 
         start_worker(job, on_done=done, on_fail=fail)
 
     def _on_overlay_clear(self, team: str, position: int) -> None:
         """Убирает пик из клетки оверлея (worker)."""
+        self._overlay.apply_clear(team, position)
+
         def job():
             return self._ctx.draft_service.clear_pick(team, position)
 

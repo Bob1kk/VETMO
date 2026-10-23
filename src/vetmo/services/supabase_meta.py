@@ -39,6 +39,133 @@ _POSITION_COLUMNS = (
     "hero_id,position,pick_share,win_rate,match_count,is_popular"
 )
 
+# Прямой select вместо RPC: RPC с p_rank_tier=0/p_position=0 на Supabase
+# выполняется десятки секунд (агрегат popular по всей таблице), из-за чего
+# мета-отчёт и оверлей «зависали». Прямые select по индексу — доли секунды.
+_META_ROW_COLUMNS = (
+    "hero_id,position,rank_tier,win_rate,pick_rate,ban_rate,pick_share,"
+    "match_count,delta_win,delta_pick,delta_ban,is_popular,ban_scope"
+)
+
+_HERO_COLUMNS = (
+    "id,name,localized_name,icon_url,primary_attr,attack_type,roles"
+)
+
+# Ранги 1..8: в БД нет per-position строк для rank_tier=0, поэтому срез
+# «Все ранги + позиция» собирается из восьми быстрых запросов (по одному
+# на ранг) и агрегируется по match_count.
+_ALL_RANKS = (1, 2, 3, 4, 5, 6, 7, 8)
+
+
+def _weighted_avg(rows: list[dict[str, Any]], field: str) -> float | None:
+    """Взвешенное по match_count среднее поля (None, если данных нет)."""
+    total = 0
+    acc = 0.0
+    for row in rows:
+        value = _as_float(row.get(field))
+        if value is None:
+            continue
+        weight = max(_as_int(row.get("match_count")) or 0, 1)
+        total += weight
+        acc += value * weight
+    if total <= 0:
+        return None
+    return round(acc / total, 2)
+
+
+def _match_count(rows: list[dict[str, Any]]) -> int:
+    return sum(_as_int(row.get("match_count")) or 0 for row in rows)
+
+
+def _details_from_grouped(
+    grouped: dict[int, list[dict[str, Any]]],
+) -> dict[int, dict[str, Any]]:
+    """position -> {pick_share, win_rate, match_count} из строк по рангам."""
+    return {
+        pos: {
+            "pick_share": _weighted_avg(items, "pick_share"),
+            "win_rate": _weighted_avg(items, "win_rate"),
+            "match_count": _match_count(items),
+        }
+        for pos, items in grouped.items()
+    }
+
+
+def _group_rows(
+    rows: list[dict[str, Any]],
+) -> dict[int, dict[int, list[dict[str, Any]]]]:
+    """hero_id -> position -> строки (по рангам)."""
+    grouped: dict[int, dict[int, list[dict[str, Any]]]] = {}
+    for row in rows:
+        hero_id = _as_int(row.get("hero_id"))
+        pos = _as_int(row.get("position"))
+        if hero_id is None or pos is None or pos <= 0:
+            continue
+        grouped.setdefault(hero_id, {}).setdefault(pos, []).append(row)
+    return grouped
+
+
+def _aggregate_all_ranks(
+    grouped: dict[int, dict[int, list[dict[str, Any]]]], position: int,
+) -> list[dict[str, Any]]:
+    """Строки среза «все ранги + позиция», взвешенные по match_count."""
+    result: list[dict[str, Any]] = []
+    for hero_id, by_pos in grouped.items():
+        items = by_pos.get(position)
+        if not items:
+            continue
+        best = max(items, key=lambda row: _as_int(row.get("match_count")) or 0)
+        result.append({
+            "hero_id": hero_id,
+            "position": position,
+            "win_rate": _weighted_avg(items, "win_rate"),
+            "pick_rate": _weighted_avg(items, "pick_rate"),
+            "ban_rate": _weighted_avg(items, "ban_rate"),
+            "delta_win": _weighted_avg(items, "delta_win"),
+            "delta_pick": _weighted_avg(items, "delta_pick"),
+            "delta_ban": _weighted_avg(items, "delta_ban"),
+            "match_count": _match_count(items),
+            "ban_scope": best.get("ban_scope"),
+            "positions": sorted(by_pos),
+            "position_details": _details_from_grouped(by_pos),
+        })
+    return result
+
+
+def _enrich_with_heroes(
+    rows: list[dict[str, Any]],
+    heroes: dict[int, dict[str, Any]],
+    patch_version: str | None,
+) -> list[dict[str, Any]]:
+    """Добавляет к строкам меты имя/иконку/атрибуты из каталога героев."""
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        hero_id = _as_int(row.get("hero_id"))
+        hero = heroes.get(hero_id) if hero_id is not None else None
+        if hero_id is None or hero is None:
+            continue
+        enriched.append({
+            "hero_id": hero_id,
+            "name": hero.get("localized_name") or hero.get("name") or "",
+            "internal_name": hero.get("name") or "",
+            "icon_url": hero.get("icon_url") or "",
+            "primary_attr": hero.get("primary_attr") or "",
+            "attack_type": hero.get("attack_type") or "",
+            "roles": hero.get("roles") or [],
+            "win_rate": row.get("win_rate"),
+            "delta_win": row.get("delta_win"),
+            "pick_rate": row.get("pick_rate"),
+            "delta_pick": row.get("delta_pick"),
+            "ban_rate": row.get("ban_rate"),
+            "delta_ban": row.get("delta_ban"),
+            "positions": row.get("positions") or [],
+            "position_details": row.get("position_details") or {},
+            "patch_version": patch_version,
+            "match_count": row.get("match_count") or 0,
+            "ban_scope": row.get("ban_scope"),
+        })
+    return enriched
+
 
 def _as_float(value: object) -> float | None:
     try:
@@ -77,7 +204,7 @@ def _hero_from_row(row: dict[str, Any]) -> Hero:
         localized_name=str(row.get("name") or row.get("internal_name") or ""),
         primary_attr=str(row.get("primary_attr") or ""),
         attack_type=str(row.get("attack_type") or ""),
-        roles=[],
+        roles=[str(role) for role in (row.get("roles") or [])],
         icon_url=str(row.get("icon_url") or "") or None,
         is_validated=True,
     )
@@ -138,6 +265,7 @@ class SupabaseMetaService:
             tuple[str, dict[str, list[dict[str, Any]]], bool],
         ] = {}
         self._last_period_end: str | None = None
+        self._hero_rows_cache: dict[int, dict[str, Any]] | None = None
 
     @property
     def period_end(self) -> str | None:
@@ -204,6 +332,7 @@ class SupabaseMetaService:
         self._meta_cache.clear()
         self._matchup_cache.clear()
         self._matchup_highlight_cache.clear()
+        self._hero_rows_cache = None
 
     # ------------------------------------------------------------- мета ----
     def get_meta_rows(
@@ -227,18 +356,23 @@ class SupabaseMetaService:
         if not self._gateway.is_configured:
             return []
         try:
-            data = self._gateway.rpc(
-                "vetmo_get_meta_report",
-                {
-                    "p_patch_id": patch.id,
-                    "p_rank_tier": rank,
-                    "p_position": pos,
-                    "p_window_days": int(self._settings.meta_window_days),
-                    "p_limit": max(0, int(limit)),
-                },
-            )
+            if rank == 0:
+                # Быстрый путь: RPC для «все ранги» на Supabase считается
+                # десятки секунд, прямые select — доли секунды.
+                data = self._direct_meta_rows(patch, rank, pos, limit)
+            else:
+                data = self._gateway.rpc(
+                    "vetmo_get_meta_report",
+                    {
+                        "p_patch_id": patch.id,
+                        "p_rank_tier": rank,
+                        "p_position": pos,
+                        "p_window_days": int(self._settings.meta_window_days),
+                        "p_limit": max(0, int(limit)),
+                    },
+                )
         except Exception as exc:  # noqa: BLE001 - показываем пустое состояние
-            logger.warning("RPC меты не удался: %s", type(exc).__name__)
+            logger.warning("Мета-срез не получен: %s", type(exc).__name__)
             data = None
         if isinstance(data, dict):
             data = [data]
@@ -247,7 +381,7 @@ class SupabaseMetaService:
             for row in (data or [])
             if isinstance(row, dict) and row.get("hero_id") is not None
         ]
-        if rows and any(not row.position_stats for row in rows):
+        if rank > 0 and rows and any(not row.position_stats for row in rows):
             self._attach_position_stats(rows, patch.id, rank)
         self._meta_cache[key] = rows
         # Запоминаем факттический период данных (однажды, при первом erfolgreich вызове)
@@ -264,6 +398,71 @@ class SupabaseMetaService:
             except Exception:  # noqa: BLE001 - период не критичен
                 pass
         return list(rows)
+
+    def _direct_meta_rows(
+        self, patch: PatchInfo, rank: int, pos: int, limit: int,
+    ) -> list[dict[str, Any]]:
+        """Строки меты прямыми select (без медленного RPC)."""
+        window = int(self._settings.meta_window_days)
+        if rank == 0 and pos > 0:
+            # В БД нет per-position строк для rank_tier=0: собираем срез
+            # «все ранги + позиция» одним запросом по рангам 1..8 и
+            # агрегируем по match_count на клиенте.
+            rows = self._gateway.select(
+                "vetmo_meta",
+                columns=_META_ROW_COLUMNS,
+                filters={
+                    "patch_id": patch.id,
+                    "rank_tier": ("in", list(_ALL_RANKS)),
+                    "position": pos,
+                    "window_days": window,
+                    "game_mode": "ALL_PICK_RANKED",
+                    "is_popular": True,
+                },
+                limit=5000,
+            )
+            aggregated = _aggregate_all_ranks(_group_rows(rows), pos)
+            aggregated.sort(
+                key=lambda row: (
+                    -(_as_float(row.get("win_rate")) or 0.0),
+                    _as_int(row.get("hero_id")) or 0,
+                ),
+            )
+            rows = aggregated[: max(0, int(limit))]
+        else:
+            filters: dict[str, Any] = {
+                "patch_id": patch.id,
+                "rank_tier": rank,
+                "position": pos,
+                "window_days": window,
+                "game_mode": "ALL_PICK_RANKED",
+            }
+            if pos > 0:
+                filters["is_popular"] = True
+            rows = self._gateway.select(
+                "vetmo_meta",
+                columns=_META_ROW_COLUMNS,
+                filters=filters,
+                order=("win_rate", True),
+                limit=max(1, int(limit)),
+            )
+        return _enrich_with_heroes(rows, self._hero_rows(), patch.version)
+
+    def _hero_rows(self) -> dict[int, dict[str, Any]]:
+        """Каталог героев (id -> строка) для склейки с метой; кэш в памяти."""
+        if self._hero_rows_cache is None:
+            try:
+                rows = self._gateway.select(
+                    "vetmo_heroes", columns=_HERO_COLUMNS, limit=500,
+                )
+            except Exception:  # noqa: BLE001 - без имён строки не построить
+                rows = []
+            self._hero_rows_cache = {
+                int(row["id"]): row
+                for row in rows
+                if row.get("id") is not None
+            }
+        return self._hero_rows_cache
 
     def _attach_position_stats(
         self, rows: list[MetaRow], patch_id: int, rank: int,

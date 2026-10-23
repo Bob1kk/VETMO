@@ -50,9 +50,9 @@ _GREY = "#8E99AD"
 _ICON_SIZE = 36
 _ROW_HEIGHT = 52
 
-_COL_RANK, _COL_HERO, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK, _COL_DPICK, _COL_BAN = range(8)
+_COL_RANK, _COL_HERO, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK, _COL_BAN = range(7)
 _HEADERS = (
-    "#", "ГЕРОЙ", "ПОЗИЦИИ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "ИЗМЕНЕНИЕ", "БАНЫ",
+    "#", "ГЕРОЙ", "ПОЗИЦИИ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "БАНЫ",
 )
 
 _POSITION_OPTIONS: tuple[tuple[str, int], ...] = (
@@ -497,7 +497,7 @@ class MetaReportWidget(QFrame):
         header = table.horizontalHeader()
         header.setSectionResizeMode(_COL_HERO, QHeaderView.ResizeMode.Stretch)
         for column in (
-            _COL_RANK, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK, _COL_DPICK,
+            _COL_RANK, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK,
             _COL_BAN,
         ):
             header.setSectionResizeMode(
@@ -505,9 +505,8 @@ class MetaReportWidget(QFrame):
         table.setColumnWidth(_COL_RANK, 36)
         table.setColumnWidth(_COL_POS, 88)
         table.setColumnWidth(_COL_WR, 142)
-        table.setColumnWidth(_COL_DWR, 70)
-        table.setColumnWidth(_COL_PICK, 132)
-        table.setColumnWidth(_COL_DPICK, 70)
+        table.setColumnWidth(_COL_DWR, 112)
+        table.setColumnWidth(_COL_PICK, 120)
         table.setColumnWidth(_COL_BAN, 108)
         table.viewport().setMouseTracking(True)
         table.viewport().installEventFilter(self)
@@ -727,11 +726,6 @@ class MetaReportWidget(QFrame):
         )
         self._table.setCellWidget(index, _COL_PICK, pick_cell)
         cells.append(pick_cell)
-
-        delta_pick = DeltaCell(row.delta_pick, self._table)
-        delta_pick.setToolTip("Изменение доли пиков по сравнению с предыдущим окном")
-        self._table.setCellWidget(index, _COL_DPICK, delta_pick)
-        cells.append(delta_pick)
 
         rank_filter = self.filters()[1]
         ban_value = row.ban_rate

@@ -32,8 +32,11 @@ logger = logging.getLogger("vetmo.supabase")
 T = TypeVar("T")
 
 _SESSION_FILE = "supabase_session.json"
-_RETRY_ATTEMPTS = 3
+_RETRY_ATTEMPTS = 2
 _RETRY_DELAYS = (0.5, 1.0)
+# Таймаут запроса к Supabase. 45 с давали «зависший» UI при троттлинге
+# проекта: один медленный select стоил до 135 с (45 × 3 попытки).
+_REQUEST_TIMEOUT_S = 20.0
 
 
 def _appdata_dir() -> Path:
@@ -122,8 +125,9 @@ class SupabaseGateway:
                 options=SyncClientOptions(
                     auto_refresh_token=True,
                     persist_session=False,
-                    postgrest_client_timeout=45,
-                    httpx_client=build_http_client(timeout=45.0),
+                    postgrest_client_timeout=_REQUEST_TIMEOUT_S,
+                    httpx_client=build_http_client(
+                        timeout=_REQUEST_TIMEOUT_S),
                 ),
             )
             self._local.client = client

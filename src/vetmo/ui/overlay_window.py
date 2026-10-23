@@ -145,15 +145,13 @@ class OverlayColumn(QFrame):
     def fill(self, snapshot: OverlaySnapshot) -> None:
         """Заполняет клетки пиками, а карточки — подсказками по драфту."""
         picked = snapshot.picked.get(self._team, {})
-        count = 0
         for position, slot in self._slots.items():
             hero = picked.get(position)
             if hero is None:
                 slot.set_empty()
                 continue
-            count += 1
             slot.set_hero(hero)
-        self._count.setText(f"{count}/5")
+        self._refresh_count()
 
         entries = snapshot.suggestions.get(self._team, [])
         for index, card in enumerate(self._cards):
@@ -167,6 +165,23 @@ class OverlayColumn(QFrame):
                 )
             else:
                 card.set_empty("—")
+
+    def set_slot_hero(self, position: int, hero: Hero | None) -> None:
+        """Немедленно ставит/убирает героя в клетке (до пересчёта снимка)."""
+        slot = self._slots.get(position)
+        if slot is None:
+            return
+        if hero is None:
+            slot.set_empty()
+        else:
+            slot.set_hero(hero)
+        self._refresh_count()
+
+    def _refresh_count(self) -> None:
+        """Счётчик «N/5» по фактически заполненным клеткам."""
+        filled = sum(
+            1 for slot in self._slots.values() if slot.hero() is not None)
+        self._count.setText(f"{filled}/5")
 
     def set_team_visible(self, visible: bool) -> None:
         """Прячет/показывает колонку (Dire настраивается в лаунчере)."""
@@ -293,6 +308,33 @@ class OverlayWindow(QWidget):
         self.refresh_requested.emit()
 
     # --- данные ---
+    def apply_pick(self, team: str, position: int, hero: Hero) -> None:
+        """Оптимистично ставит героя в клетку — не ждём пересчёта снимка.
+
+        Пересчёт рекомендаций может идти секунды; без этого клетка «не
+        реагировала» на выбор героя.
+        """
+        column = self._column_for(team)
+        if column is None:
+            return
+        column.set_slot_hero(position, hero)
+        self._current_picked.setdefault(team, {})[position] = hero
+
+    def apply_clear(self, team: str, position: int) -> None:
+        """Оптимистично очищает клетку до прихода нового снимка."""
+        column = self._column_for(team)
+        if column is None:
+            return
+        column.set_slot_hero(position, None)
+        self._current_picked.setdefault(team, {}).pop(position, None)
+
+    def _column_for(self, team: str) -> OverlayColumn | None:
+        if team == "radiant":
+            return self._radiant
+        if team == "dire":
+            return self._dire
+        return None
+
     def apply_snapshot(self, snapshot: OverlaySnapshot) -> None:
         """Применяет снимок OverlayViewModel: клетки, подсказки, шаг и прогресс."""
         show_dire = self._settings.get_show_dire()
@@ -350,8 +392,25 @@ class OverlayWindow(QWidget):
                     self, "Каталог пуст",
                     "Не удалось получить список героев. Обновите данные.")
                 return
+            # Уже пикнутых героев не предлагаем: иначе set_pick падает
+            # с «герой уже пикнут» и пользователь видит ошибку вместо выбора.
+            taken = {
+                hero.id
+                for picked in self._current_picked.values()
+                for hero in picked.values()
+                if hero is not None
+            }
+            if current_id is not None:
+                taken.discard(current_id)
+            available = [hero for hero in heroes if hero.id not in taken]
+            if not available:
+                QMessageBox.information(
+                    self, "Все герои выбраны",
+                    "Все герои каталога уже пикнуты. Очистите клетку, чтобы "
+                    "выбрать другого.")
+                return
             dialog = HeroPickDialog(
-                heroes, team, position, current_id, None)
+                available, team, position, current_id, None)
             dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
             dialog.hero_selected.connect(
                 lambda hero_id: self.pick_requested.emit(
@@ -360,6 +419,10 @@ class OverlayWindow(QWidget):
             center = self.frameGeometry().center()
             dialog.move(center.x() - dialog.width() // 2,
                         center.y() - dialog.height() // 2)
+            # Оверлей — always-on-top Tool: без явного поднятия диалог может
+            # открыться позади и выглядеть как «зависшее» приложение.
+            dialog.raise_()
+            dialog.activateWindow()
             dialog.exec()
 
         def fail(message: str) -> None:

@@ -115,6 +115,26 @@ def test_recommendations_exclude_picked_hero(svc_full: DraftService) -> None:
     assert ids[0] == 102  # следующий по приоритету
 
 
+def test_recommendations_for_none_state_is_baseline(
+    svc_full: DraftService,
+) -> None:
+    """state=None — базовая линия: пики не учитываются (Δ контр-пика)."""
+    state = svc_full.start_session()
+    state = svc_full.add_pick_auto(None, hero_id=101, session_id=state.id)
+
+    baseline = [
+        hero.id for hero, _ in svc_full.get_recommendations_for(
+            None, 1, limit=5)
+    ]
+    current = [
+        hero.id for hero, _ in svc_full.get_recommendations_for(
+            state, 1, limit=5)
+    ]
+
+    assert 101 in baseline  # без состояния герой ещё «свободен»
+    assert 101 not in current
+
+
 def test_recommendations_without_priorities(db) -> None:
     """Без приоритетов и меты: непустой список со score 0.0, отсортирован."""
     _, sessionmaker = db

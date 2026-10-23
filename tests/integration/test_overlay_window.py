@@ -174,6 +174,22 @@ def test_fill_marks_picked_hero_in_slot(overlay_window) -> None:
     assert window._radiant._count.text() == "1/5"
 
 
+def test_apply_pick_updates_slot_before_snapshot(overlay_window) -> None:
+    """Оптимистичный пик: клетка и счётчик обновляются без пересчёта."""
+    window, _, _, _ = overlay_window
+    window.apply_pick("radiant", 2, _hero(105))
+
+    slot = window._radiant._slots[2]
+    assert slot.hero() is not None
+    assert slot.hero().id == 105
+    assert slot.property("filled") is True
+    assert window._radiant._count.text() == "1/5"
+
+    window.apply_clear("radiant", 2)
+    assert slot.hero() is None
+    assert window._radiant._count.text() == "0/5"
+
+
 def test_drag_header_reports_position(overlay_window, qtbot) -> None:
     """Шапка «сообщает» позицию после отпускания мыши (сохранение настроек)."""
     window, settings_service, _, _ = overlay_window
