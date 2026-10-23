@@ -105,6 +105,12 @@ class SupabaseDraftService:
         self._meta = meta
         self._remote_disabled = False
         self._local = self._read_local()
+        # Матчапы/связки для всех кандидатов: один запрос на состав врагов,
+        # а не по запросу на каждую из 10 позиций оверлея.
+        self._pair_cache: dict[
+            tuple[str, frozenset[int], frozenset[int]],
+            dict[int, list[dict[str, Any]]],
+        ] = {}
 
     # ------------------------------------------------------------ локально --
     def _read_local(self) -> dict[str, Any]:
@@ -595,14 +601,16 @@ class SupabaseDraftService:
         if not enemy_ids and not ally_ids:
             candidates.sort(key=lambda rec: (-rec.score, rec.hero.localized_name))
             return candidates[:limit]
-        # Один bulk-запрос на всех кандидатов вместо 127 отдельных.
-        hero_ids = [rec.hero.id for rec in candidates]
+        # Один bulk-запрос на всех героев вместо 127 отдельных и вместо
+        # повторного запроса на каждую позицию: состав врагов/союзников
+        # одинаков для всех позиций снимка.
+        hero_ids = [hero.id for hero in heroes]
         matchup_map = (
-            self._meta.get_matchups_bulk(hero_ids, list(enemy_ids))
+            self._pair_stats(hero_ids, enemy_ids, "vs")
             if enemy_ids else {}
         )
         synergy_map = (
-            self._meta.get_synergies_bulk(hero_ids, list(ally_ids))
+            self._pair_stats(hero_ids, ally_ids, "with")
             if ally_ids else {}
         )
         rescored: list[Recommendation] = []
@@ -625,6 +633,21 @@ class SupabaseDraftService:
             ))
         rescored.sort(key=lambda rec: (-rec.score, rec.hero.localized_name))
         return rescored[:limit]
+
+    def _pair_stats(
+        self, hero_ids: list[int], opponent_ids: set[int], kind: str,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Матчапы/связки с кэшем по составу врагов (или союзников)."""
+        key = (kind, frozenset(hero_ids), frozenset(opponent_ids))
+        cached = self._pair_cache.get(key)
+        if cached is not None:
+            return cached
+        if kind == "vs":
+            data = self._meta.get_matchups_bulk(hero_ids, list(opponent_ids))
+        else:
+            data = self._meta.get_synergies_bulk(hero_ids, list(opponent_ids))
+        self._pair_cache[key] = data
+        return data
 
     def get_matchup_report(
         self,
