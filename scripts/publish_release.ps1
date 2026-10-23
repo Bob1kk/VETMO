@@ -132,6 +132,8 @@ if ($NotesFile) {
 } else {
     $body = New-DefaultNotes $Version
 }
+# Windows PowerShell 5.1: ConvertTo-Json иначе сериализует строку как объект.
+$body = [string]$body
 
 Write-Step "Публикация релиза $Tag"
 $slug = Get-RepoSlug
