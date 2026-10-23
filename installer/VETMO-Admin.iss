@@ -1,12 +1,12 @@
 ; VETMO Admin — установщик админ-версии (Inno Setup 6.7+).
-; Сборка: ISCC.exe /DMyAppVersion=0.1.0 installer\VETMO-Admin.iss
+; Сборка: ISCC.exe /DMyAppVersion=0.2.0 installer\VETMO-Admin.iss
 ; Требуется готовый dist\VETMO-Admin.exe (PyInstaller, см. vetmo-admin.spec).
 ;
 ; Admin — инструмент сопровождения: он читает service_role и STRATZ-токен из
 ; %APPDATA%\VETMO\secrets.env. Установщик секреты НЕ создаёт и не копирует.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.2.0"
 #endif
 
 #define MyAppName "VETMO Admin"

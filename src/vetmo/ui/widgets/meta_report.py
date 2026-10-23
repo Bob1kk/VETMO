@@ -50,9 +50,9 @@ _GREY = "#8E99AD"
 _ICON_SIZE = 36
 _ROW_HEIGHT = 52
 
-_COL_RANK, _COL_HERO, _COL_WR, _COL_DWR, _COL_PICK, _COL_BAN = range(6)
+_COL_HERO, _COL_WR, _COL_DWR, _COL_PICK, _COL_BAN = range(5)
 _HEADERS = (
-    "#", "ГЕРОЙ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "БАНЫ",
+    "ГЕРОЙ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "БАНЫ",
 )
 
 _POSITION_OPTIONS: tuple[tuple[str, int], ...] = (
@@ -374,12 +374,11 @@ class MetaReportWidget(QFrame):
         header = table.horizontalHeader()
         header.setSectionResizeMode(_COL_HERO, QHeaderView.ResizeMode.Stretch)
         for column in (
-            _COL_RANK, _COL_WR, _COL_DWR, _COL_PICK,
+            _COL_WR, _COL_DWR, _COL_PICK,
             _COL_BAN,
         ):
             header.setSectionResizeMode(
                 column, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(_COL_RANK, 36)
         table.setColumnWidth(_COL_WR, 142)
         table.setColumnWidth(_COL_DWR, 112)
         table.setColumnWidth(_COL_PICK, 120)
@@ -561,12 +560,7 @@ class MetaReportWidget(QFrame):
             scrollbar.setSingleStep(24)
 
     def _fill_row(self, index: int, row: MetaReportRow) -> None:
-        rank_label = QLabel(f"{index + 1:02d}", self._table)
-        rank_label.setObjectName("mutedSmall")
-        rank_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rank_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._table.setCellWidget(index, _COL_RANK, rank_label)
-        cells: list[QWidget] = [rank_label]
+        cells: list[QWidget] = []
 
         hero_cell = HeroCell(
             row, self._table,

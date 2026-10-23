@@ -19,7 +19,6 @@ class Recommendation:
     counter: float = 0.0
     synergy: float = 0.0
     meta_win_rate: float | None = None
-    priority: bool = False
 
 
 __all__ = ["Recommendation"]

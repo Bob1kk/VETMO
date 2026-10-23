@@ -29,7 +29,6 @@ from vetmo.ui.viewmodels.main_viewmodel import MainViewModel
 from vetmo.ui.viewmodels.overlay_vm import OverlaySnapshot, OverlayViewModel
 from vetmo.ui.widgets.meta_report import MetaReportWidget
 from vetmo.ui.widgets.news_widget import NewsWidget
-from vetmo.ui.widgets.priorities_dialog import PrioritiesDialog
 from vetmo.ui.workers import start_worker
 
 _RECS_PER_POSITION = 5
@@ -54,13 +53,11 @@ class MainWindow(QMainWindow):
         self._ctx = context
         self._vm = MainViewModel(
             context.news_service,  # type: ignore[arg-type]
-            context.settings_service,  # type: ignore[arg-type]
             context.draft_service,  # type: ignore[arg-type]
             meta_report_loader=getattr(context, "meta_report", None),
         )
         self._overlay_vm = OverlayViewModel(
             context.draft_service,  # type: ignore[arg-type]
-            context.settings_service,  # type: ignore[arg-type]
             context.news_service,  # type: ignore[arg-type]
             hero_lookup=context.get_hero_by_id,
             meta_loader=context.meta.get_meta_rows,
@@ -96,7 +93,6 @@ class MainWindow(QMainWindow):
         self._status_label = _status_label("Готово")
         self._toggle_overlay = QPushButton("Запустить оверлей", self)
         self._toggle_overlay.setObjectName("bigOverlay")
-        self._priorities_open = False
         self._overlay_visible = False
         self._overlay_busy = False
         self._overlay_pending = False
@@ -114,8 +110,6 @@ class MainWindow(QMainWindow):
         self.resize(1360, 800)
 
         self._settings_panel.settings_committed.connect(self._commit_setting)
-        self._settings_panel.priorities_requested.connect(
-            self._open_priorities)
         self._settings_panel.sync_requested.connect(self._start_sync)
         self._settings_panel.overlay_toggle_requested.connect(
             self._toggle_overlay_clicked)
@@ -182,16 +176,13 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(self._status_label, 1)
 
     def _build_shortcuts(self) -> None:
-        """Esc — скрыть оверлей; Ctrl+Q — выход; F1 — приоритеты позиций."""
+        """Esc — скрыть оверлей; Ctrl+Q — выход; Ctrl+, — настройки оверлея."""
         esc = QShortcut(QKeySequence("Esc"), self)
         esc.setContext(Qt.ShortcutContext.WindowShortcut)
         esc.activated.connect(self._hide_overlay)
         quit_short = QShortcut(QKeySequence("Ctrl+Q"), self)
         quit_short.setContext(Qt.ShortcutContext.WindowShortcut)
         quit_short.activated.connect(self.close)
-        settings_short = QShortcut(QKeySequence("F1"), self)
-        settings_short.setContext(Qt.ShortcutContext.WindowShortcut)
-        settings_short.activated.connect(self._open_priorities)
         overlay_settings = QShortcut(QKeySequence("Ctrl+,"), self)
         overlay_settings.setContext(Qt.ShortcutContext.WindowShortcut)
         overlay_settings.activated.connect(self._open_overlay_settings)
@@ -435,55 +426,6 @@ class MainWindow(QMainWindow):
                 self._overlay.adjustSize()
 
         start_worker(job, on_done=done, on_fail=self._default_fail)
-
-    # ------------------------------------------------------------ приоритеты --
-    def _open_priorities(self) -> None:
-        """F1/кнопка: диалог приоритетов; каталог и профиль — из worker."""
-        if self._priorities_open:
-            return
-
-        def job():
-            heroes = self._ctx.all_heroes()
-            priorities = self._ctx.settings_service.get_position_priorities()
-            return heroes, priorities
-
-        self._priorities_open = True
-
-        def done(result: tuple) -> None:
-            heroes, priorities = result
-            if not heroes:
-                self.status(
-                    "Приоритеты: сначала обновите каталог героев.")
-                self._priorities_open = False
-                return
-            dialog = PrioritiesDialog(heroes, priorities, self)
-            dialog.saved.connect(self._on_priorities_saved)
-            dialog.finished.connect(
-                lambda _=None: setattr(self, "_priorities_open", False))
-            dialog.show()
-
-        def fail(message: str) -> None:
-            self._priorities_open = False
-            self._default_fail(message)
-
-        start_worker(job, on_done=done, on_fail=fail)
-
-    def _on_priorities_saved(self, priorities: dict) -> None:
-        """Запись приоритетов в БД (worker); затем перестройка оверлея."""
-        def done(_: object) -> None:
-            self.status("Приоритеты позиций сохранены")
-            self._vm.notify_priorities_saved(priorities)
-            if self._overlay_visible:
-                # Refresh только после коммита: иначе воркер прочитает старые
-                # приоритеты из БД (гонка записи и чтения).
-                self._refresh_overlay()
-
-        start_worker(
-            self._ctx.settings_service.set_position_priorities,
-            priorities,
-            on_done=done,
-            on_fail=self._default_fail,
-        )
 
     # ------------------------------------------------------------- драфт --
     # ------------------------------------------------- доска оверлея -------

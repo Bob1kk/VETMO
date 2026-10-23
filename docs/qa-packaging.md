@@ -44,7 +44,7 @@
   и кладёт `ADMIN-SETUP.txt`, секреты не копирует.
 - `scripts/build_release.ps1` — одна команда: тесты (pytest/ruff/mypy) → оба exe →
   проверки состава и значений секретов → smoke → оба установщика →
-  тихая установка/удаление каждого → `release/SHA256SUMS.txt`.
+  тихая установка/удаление каждого.
   - Пользовательский smoke: запуск с чистым `APPDATA`, проверка живого процесса,
     создания лога и отсутствия `secrets.env`/`.env`.
   - Admin smoke: `VETMO-Admin.exe --self-check` с заведомо отсутствующим
@@ -61,17 +61,16 @@
 Сборка завершилась с кодом `0`: «Build complete» для обеих PyInstaller-сборок,
 «Successful compile» для обоих установщиков.
 
-## Размеры и контрольные суммы артефактов
+## Размеры артефактов
 
-| Файл | Размер, байт | Размер, МиБ | SHA256 |
-|---|---:|---:|---|
-| `dist/VETMO.exe` | 67 567 628 | 64,44 | `b7ac896dff1596e1a958c096b8bec38fa0a67f100bff14e07cc20bb47b6b1397` |
-| `dist/VETMO-Admin.exe` | 69 374 100 | 66,16 | `ac78d653d27d7b3c20d89e2c95d18cbf7714dba29903dd2fd6e4cd1b4cdcdee1` |
-| `release/VETMO-Setup-0.1.0.exe` | 68 667 404 | 65,49 | `578c106f42003995749e477ab3ba8365595ed6434987b9673aff9dd61919aaa6` |
-| `release/VETMO-Admin-Setup-0.1.0.exe` | 70 601 884 | 67,33 | `4c26d260d31ed4bd2a6136d7906771608dc18f5446c98054d7f30fc5b1e499eb` |
+| Файл | Размер, байт | Размер, МиБ |
+|---|---:|---:|
+| `dist/VETMO.exe` | 67 567 628 | 64,44 |
+| `dist/VETMO-Admin.exe` | 69 374 100 | 66,16 |
+| `release/VETMO-Setup-0.1.0.exe` | 68 667 404 | 65,49 |
+| `release/VETMO-Admin-Setup-0.1.0.exe` | 70 601 884 | 67,33 |
 
-Те же значения записаны скриптом в `release/SHA256SUMS.txt`.
-Установщики и `SHA256SUMS.txt` коммитятся в ветку (исключение в `.gitignore`),
+Установщики коммитятся в ветку (исключение в `.gitignore`),
 чтобы пользователи скачивали их прямо из `release/`; `dist/` и `build/`
 не коммитятся.
 
@@ -123,7 +122,7 @@
 
 ## Тесты
 
-`pytest tests/ -q` — 226 passed, включая:
+`pytest tests/ -q` — 238 passed, включая:
 
 - `tests/integration/test_overlay_window.py` — клетки 1..5, клик по клетке,
   крестик очистки, подсказки, `show_dire`, перетаскивание;

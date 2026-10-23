@@ -24,10 +24,9 @@ from vetmo.ui.monitor import available_screens, screen_label
 
 
 class SettingsPanel(QFrame):
-    """Настройки оверлея: позиция, прозрачность, тема, флаги, приоритеты."""
+    """Настройки оверлея: позиция, непрозрачность, тема, флаги."""
 
     settings_committed = Signal(str, object)  # (kind, value)
-    priorities_requested = Signal()
     sync_requested = Signal(int)              # limit героев
     manual_pick_requested = Signal()
     overlay_toggle_requested = Signal()
@@ -52,7 +51,7 @@ class SettingsPanel(QFrame):
     def _build_ui(self, app_version: str) -> None:
         title = QLabel("Настройки", self)
         title.setObjectName("metaTitle")
-        subtitle = QLabel("Оверлей, приоритеты и данные", self)
+        subtitle = QLabel("Оверлей и данные", self)
         subtitle.setObjectName("metaSubtitle")
 
         # Позиция оверлея
@@ -79,8 +78,8 @@ class SettingsPanel(QFrame):
         self._monitor.setObjectName("filterCombo")
         self._fill_monitors()
 
-        # Прозрачность
-        opacity_label = QLabel("Прозрачность", self)
+        # Непрозрачность
+        opacity_label = QLabel("Непрозрачность", self)
         self._opacity_value = QLabel(self)
         self._opacity_value.setObjectName("muted")
         opacity_row = QHBoxLayout()
@@ -104,14 +103,11 @@ class SettingsPanel(QFrame):
             "недоступна — настройки открываются из этого окна.")
         self._show_dire = QCheckBox("Показать пики Dire", self)
 
-        # Кнопки оверлея/приоритетов/синхронизации
+        # Кнопки оверлея/синхронизации
         self._overlay_button = self._button(
             "Показать оверлей", "secondary")
         self._overlay_button.clicked.connect(
             self.overlay_toggle_requested.emit)
-        priorities_button = self._button(
-            "Настроить приоритеты позиций…", "secondary")
-        priorities_button.clicked.connect(self.priorities_requested.emit)
         self._sync_button = self._button("Обновить данные", "secondary")
         self._sync_button.setToolTip(
             "Перечитать мету, патчи и новости из Supabase. "
@@ -139,9 +135,6 @@ class SettingsPanel(QFrame):
         layout.addWidget(self._click_through)
         layout.addWidget(self._show_dire)
         layout.addWidget(self._overlay_button)
-        layout.addSpacing(4)
-        layout.addWidget(self._section("ПРИОРИТЕТЫ"))
-        layout.addWidget(priorities_button)
         layout.addSpacing(4)
         layout.addWidget(self._section("ДАННЫЕ"))
         layout.addWidget(self._sync_button)

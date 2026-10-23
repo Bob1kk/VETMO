@@ -1,8 +1,8 @@
 """OverlayViewModel: рекомендации позиций 1..5 + причины. Без Qt (NFR-005).
 
-Причины рекомендации (по убыванию приоритета):
-- «Приоритет позиции N» — герой из пользовательских приоритетов;
+Причины рекомендации (по убыванию значимости):
 - «Контр-пик» — есть пики соперника и счёт вырос против базовой линии;
+- «Связка» — герой хорошо играет с уже пикнутыми союзниками;
 - «Мета» — герой в мета-срезе (винрейт показан отдельно на карточке);
 - «Подбор по позициям» — каталог/роли.
 """
@@ -16,7 +16,6 @@ from vetmo.domain.recommendation import Recommendation
 from vetmo.domain.rules import TOTAL_PICKS
 from vetmo.services.draft_service import DraftService
 from vetmo.services.news_service import NewsService
-from vetmo.services.settings_service import SettingsService
 
 _TEAM_RADIANT: Team = "radiant"
 _TEAM_DIRE: Team = "dire"
@@ -74,13 +73,11 @@ class OverlayViewModel:
     def __init__(
         self,
         draft_service: DraftService,
-        settings_service: SettingsService,
         news_service: NewsService,
         hero_lookup: Callable[[int], Hero | None] | None = None,
         meta_loader: Callable[..., list[MetaRow]] | None = None,
     ) -> None:
         self._draft = draft_service
-        self._settings = settings_service
         self._news = news_service
         self._hero_lookup = hero_lookup
         self._meta_loader = meta_loader
@@ -91,11 +88,10 @@ class OverlayViewModel:
     ) -> list[tuple[Hero, float, str]]:
         """[(Hero, score, причина)] для позиции — без контекста драфта."""
         recs = self._draft.get_recommendations(position, session_id, limit)
-        priorities = self._settings.get_position_priorities()
         meta_wr = self._meta_win_rates()
         return [
             (hero, score, _classify_reason(
-                position, hero, score, {}, set(), priorities, meta_wr,
+                position, hero, score, {}, set(), meta_wr,
             ))
             for hero, score in recs
         ]
@@ -113,7 +109,6 @@ class OverlayViewModel:
             total=state.total_picks,
             next_team=_next_team(state),
         )
-        priorities = self._settings.get_position_priorities()
         for team in (_TEAM_RADIANT, _TEAM_DIRE):
             opponents = _opponent_hero_ids(state, team)
             taken = [p.position for p in state.picks if p.team == team]
@@ -124,7 +119,7 @@ class OverlayViewModel:
                 if position in taken:
                     continue  # позиция занята — карточку рекомендаций не пикаем
                 snapshot.columns[team][position] = self._entries_for(
-                    position, team, state, opponents, priorities, meta_wr, limit,
+                    position, team, state, opponents, meta_wr, limit,
                 )
             snapshot.suggestions[team] = _flatten_suggestions(
                 snapshot.columns[team], suggestions_limit,
@@ -138,7 +133,6 @@ class OverlayViewModel:
         team: Team,
         state: DraftSession,
         opponents: set[int],
-        priorities: dict[int, list[int]],
         meta_wr: dict[int, float],
         limit: int,
     ) -> list[OverlayEntry]:
@@ -149,7 +143,7 @@ class OverlayViewModel:
                 OverlayEntry(
                     hero=rec.hero,
                     score=rec.score,
-                    reason=_reason_from_detail(rec, priorities, position),
+                    reason=_reason_from_detail(rec, position),
                     win_rate=(
                         rec.meta_win_rate
                         if rec.meta_win_rate is not None
@@ -171,8 +165,7 @@ class OverlayViewModel:
         entries: list[OverlayEntry] = []
         for hero, score in recs:
             reason = _classify_reason(
-                position, hero, score, baseline, opponents,
-                priorities, meta_wr,
+                position, hero, score, baseline, opponents, meta_wr,
             )
             entries.append(OverlayEntry(
                 hero=hero, score=score, reason=reason,
@@ -277,12 +270,9 @@ def _classify_reason(
     score: float,
     baseline: dict[int, float],
     opponents: set[int],
-    priorities: dict[int, list[int]],
     meta_wr: dict[int, float],
 ) -> str:
     """Выбор текста причины карточки."""
-    if hero.id in priorities.get(position, []):
-        return "Приоритет позиции"
     if opponents and hero.id in baseline:
         delta = score - baseline[hero.id]
         if delta > _COUNTER_DELTA:
@@ -295,12 +285,9 @@ def _classify_reason(
 
 def _reason_from_detail(
     rec: Recommendation,
-    priorities: dict[int, list[int]],
     position: int,
 ) -> str:
     """Причина карточки по разложению счёта (контр-пик > связка > мета)."""
-    if rec.priority or rec.hero.id in priorities.get(position, []):
-        return "Приоритет позиции"
     if rec.counter >= _COUNTER_DELTA:
         return "Контр-пик"
     if rec.synergy >= _SYNERGY_DELTA:

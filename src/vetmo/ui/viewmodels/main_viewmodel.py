@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 
 from vetmo.services.draft_service import DraftService
 from vetmo.services.news_service import NewsItem, NewsService
-from vetmo.services.settings_service import SettingsService
 from vetmo.ui.viewmodels.callbacks import CallbackList
 
 
@@ -184,17 +183,15 @@ def _normalize_meta_row(row: object) -> MetaReportRow | None:
 
 
 class MainViewModel:
-    """Состояние лаунчера: новости, мета, приоритеты позиций."""
+    """Состояние лаунчера: новости, мета и драфт."""
 
     def __init__(
         self,
         news_service: NewsService,
-        settings_service: SettingsService,
         draft_service: DraftService,
         meta_report_loader: Callable[..., tuple[list[object], bool]] | None = None,
     ) -> None:
         self._news = news_service
-        self._settings = settings_service
         self._draft = draft_service
         # meta_report_loader: callable(limit, rank_tier, position) ->
         #     (rows, rank_supported) — AppContext.meta_report.
@@ -204,7 +201,6 @@ class MainViewModel:
 
         self.news_updated = CallbackList()      # (list[NewsItem], is_online)
         self.meta_updated = CallbackList()      # (MetaReport,)
-        self.priorities_updated = CallbackList()  # (dict[int, list[int]],)
         self.draft_updated = CallbackList()     # (DraftSession,)
 
     # --- запросы данных (worker-поток) ---
@@ -264,12 +260,3 @@ class MainViewModel:
     def publish_draft_state(self, state) -> None:
         """Рассылает состояние драфта подписчикам."""
         self.draft_updated.emit(state)
-
-    # --- настройки приоритетов (дефолт для диалога) ---
-    def get_priorities(self) -> dict[int, list[int]]:
-        """Текущие приоритеты позиций 1..5 -> hero_id."""
-        return self._settings.get_position_priorities()
-
-    def notify_priorities_saved(self, priorities: dict[int, list[int]]) -> None:
-        """Сообщает о сохранённых приоритетах (запись БД делает UI-воркер)."""
-        self.priorities_updated.emit(priorities)

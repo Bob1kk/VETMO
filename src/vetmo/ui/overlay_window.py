@@ -2,7 +2,7 @@
 
 Не крадёт фокус у Dota 2 (Review Focus #2): Qt.Tool +
 WA_ShowWithoutActivating + NoFocus; при click-through мышь проходит
-насквозь. Позиция/прозрачность/флаги читаются из SettingsService.
+насквозь. Позиция/непрозрачность/флаги читаются из SettingsService.
 
 Доска драфта: у каждой команды 5 кликабельных клеток (позиции 1..5).
 Клик открывает выбор героя с фильтром по атрибутам; выбранные герои
@@ -343,7 +343,7 @@ class OverlayWindow(QWidget):
 
     # --- контракт OverlayService (вызывается через getattr) ---
     def show_overlay(self) -> None:
-        """Показывает оверлей: позиция/прозрачность/флаги из настроек."""
+        """Показывает оверлей: позиция/непрозрачность/флаги из настроек."""
         self._apply_settings()
         self.show()
         self.adjustSize()
@@ -402,11 +402,11 @@ class OverlayWindow(QWidget):
 
     # --- внутренние ---
     def apply_settings(self) -> None:
-        """Публичное имя для лаунчера: позиция/прозрачность/флаги."""
+        """Публичное имя для лаунчера: позиция/непрозрачность/флаги."""
         self._apply_settings()
 
     def _apply_settings(self) -> None:
-        """Позиция, прозрачность, click-through — из SettingsService."""
+        """Позиция, непрозрачность, click-through — из SettingsService."""
         was_visible = self.isVisible()
         x, y = self._settings.get_overlay_position()
         get_monitor = getattr(self._settings, "get_monitor_index", None)

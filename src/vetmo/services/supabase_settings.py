@@ -20,7 +20,7 @@ logger = logging.getLogger("vetmo.settings")
 
 _PROFILE_COLUMNS = (
     "user_id,overlay_x,overlay_y,opacity,theme,click_through,show_dire,"
-    "priorities,display_index"
+    "display_index"
 )
 
 _DEFAULTS: dict[str, Any] = {
@@ -30,7 +30,6 @@ _DEFAULTS: dict[str, Any] = {
     "theme": "dark",
     "click_through": False,
     "show_dire": True,
-    "priorities": {},
     "display_index": -1,
 }
 
@@ -158,7 +157,7 @@ class SupabaseSettingsService:
     def set_monitor_index(self, index: int) -> None:
         self._update(display_index=int(index))
 
-    # --------------------------------------------------------- прозрачность --
+    # ------------------------------------------------------- непрозрачность --
     def get_opacity(self) -> float:
         try:
             return float(self._get("opacity"))
@@ -191,45 +190,6 @@ class SupabaseSettingsService:
 
     def set_show_dire(self, flag: bool) -> None:
         self._update(show_dire=bool(flag))
-
-    # --------------------------------------------------------- приоритеты --
-    def get_position_priorities(self) -> dict[int, list[int]]:
-        """Позиция 1..5 -> hero_id в порядке предпочтения."""
-        raw = self._get("priorities")
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except ValueError:
-                return {}
-        if not isinstance(raw, dict):
-            return {}
-        result: dict[int, list[int]] = {}
-        for key, ids in raw.items():
-            try:
-                position = int(key)
-            except (TypeError, ValueError):
-                continue
-            if not 1 <= position <= 5 or not isinstance(ids, list):
-                continue
-            parsed: list[int] = []
-            for item in ids:
-                try:
-                    hero_id = int(item)
-                except (TypeError, ValueError):
-                    continue
-                if hero_id >= 1:
-                    parsed.append(hero_id)
-            result[position] = parsed
-        return result
-
-    def set_position_priorities(self, priorities: dict[int, list[int]]) -> None:
-        clean: dict[str, list[int]] = {}
-        for position, hero_ids in priorities.items():
-            if 1 <= int(position) <= 5:
-                clean[str(int(position))] = [
-                    int(h) for h in hero_ids if int(h) >= 1
-                ]
-        self._update(priorities=clean)
 
 
 __all__ = ["SupabaseSettingsService"]

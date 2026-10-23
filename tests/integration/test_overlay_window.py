@@ -43,10 +43,10 @@ def _hero(hero_id: int) -> Hero:
     )
 
 
-def _make_vm(settings_service, draft_service, sessionmaker) -> OverlayViewModel:
+def _make_vm(draft_service, sessionmaker) -> OverlayViewModel:
     """OverlayViewModel на реальных сервисах tmp-БД (без сети)."""
     return OverlayViewModel(
-        draft_service, settings_service, NewsService(sessionmaker, Settings()),
+        draft_service, NewsService(sessionmaker, Settings()),
         hero_lookup=_hero,  # карточкам не нужны запросы к БД героя
     )
 
@@ -57,7 +57,7 @@ WindowT = tuple[OverlayWindow, SettingsService, DraftService, sessionmaker]
 
 @pytest.fixture()
 def overlay_env(db) -> EnvT:
-    """Сеансмейкер с каталогом 10 героев + приоритетами позиции 1 и метой."""
+    """Сеансмейкер с каталогом 10 героев и метой."""
     _, smaker = db
     with smaker() as session:
         repo = HeroRepository(session)
@@ -68,7 +68,6 @@ def overlay_env(db) -> EnvT:
         meta.upsert(patch_id, 100, 55.0, 12.0)
         meta.upsert(patch_id, 101, 54.0, 11.0)
     settings_service = SettingsService(smaker)
-    settings_service.set_position_priorities({1: [100, 101]})
     return settings_service, DraftService(smaker), smaker
 
 
@@ -114,7 +113,7 @@ def test_fill_shows_pick_slots_and_suggestions(overlay_window) -> None:
     """FR-004: клетки 1..5 на команду и подсказки по позициям."""
     window, settings_service, draft_service, smaker = overlay_window
     window.apply_snapshot(_make_vm(
-        settings_service, draft_service, smaker).compute_all(limit=2))
+        draft_service, smaker).compute_all(limit=2))
 
     # show_dire по умолчанию True -> обе колонки заполнены
     assert not window._radiant.isHidden()
@@ -131,15 +130,13 @@ def test_fill_shows_pick_slots_and_suggestions(overlay_window) -> None:
         assert any(
             hero_name in " ".join(names) for hero_name in all_names
         ), f"{team}: подсказки пусты: {names}"
-    # приоритет позиции 1 — первым в строке позиции 1
-    assert "Hero 100" in _entry_names(window._radiant)[0]
 
 
 def test_pick_slot_click_requests_hero(overlay_window, qtbot) -> None:
     """Клик по пустой клетке просит выбор героя (team, position)."""
     window, settings_service, draft_service, smaker = overlay_window
     window.apply_snapshot(_make_vm(
-        settings_service, draft_service, smaker).compute_all(limit=2))
+        draft_service, smaker).compute_all(limit=2))
 
     # Диалог героя в тесте не открываем — фиксируем сам запрос.
     calls: list[tuple[str, int]] = []
@@ -171,7 +168,7 @@ def test_fill_marks_picked_hero_in_slot(overlay_window) -> None:
     assert state.picks
 
     window.apply_snapshot(_make_vm(
-        settings_service, draft_service, smaker).compute_all(limit=2))
+        draft_service, smaker).compute_all(limit=2))
 
     slot = window._radiant._slots[1]
     assert slot.hero() is not None
@@ -215,7 +212,7 @@ def test_fill_dire_column_respects_show_dire_setting(overlay_window) -> None:
     settings_service.set_show_dire(False)
 
     window.apply_snapshot(_make_vm(
-        settings_service, draft_service, smaker).compute_all(limit=2))
+        draft_service, smaker).compute_all(limit=2))
 
     assert window._dire.isHidden()
     assert not window._radiant.isHidden()
@@ -251,7 +248,7 @@ def test_update_overlay_with_draft_service_does_not_crash(
     """update_overlay() с реальными сервисами не падает и пингует refresh."""
     window, settings_service, draft_service, smaker = overlay_window
     window.apply_snapshot(_make_vm(
-        settings_service, draft_service, smaker).compute_all(limit=2))
+        draft_service, smaker).compute_all(limit=2))
 
     pings: list = []
     window.refresh_requested.connect(lambda: pings.append(1))

@@ -75,7 +75,7 @@ def test_hero_click_opens_matchup_dialog(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(
         "vetmo.ui.widgets.meta_report.MatchupDialog", FakeDialog,
     )
-    cell = widget._table.cellWidget(0, 1)
+    cell = widget._table.cellWidget(0, 0)
     assert cell is not None
     qtbot.mouseClick(cell, Qt.MouseButton.LeftButton)
 

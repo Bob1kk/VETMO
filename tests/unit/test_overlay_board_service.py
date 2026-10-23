@@ -26,7 +26,6 @@ def service(tmp_path, monkeypatch) -> SupabaseDraftService:
         _StubGateway(),  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
-        None,  # type: ignore[arg-type]
     )
 
 

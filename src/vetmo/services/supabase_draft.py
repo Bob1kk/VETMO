@@ -26,11 +26,9 @@ from vetmo.domain.rules import (
 )
 from vetmo.infra.supabase_gateway import SupabaseGateway
 from vetmo.services.supabase_meta import SupabaseMetaService
-from vetmo.services.supabase_settings import SupabaseSettingsService
 
 logger = logging.getLogger("vetmo.draft")
 
-_PRIORITY_BONUS = 10.0
 _POSITION_FIT_WEIGHT = 4.0
 _META_WR_WEIGHT = 1.0
 _PICK_RATE_WEIGHT = 0.05
@@ -96,12 +94,10 @@ class SupabaseDraftService:
         self,
         gateway: SupabaseGateway,
         heroes: SupabaseHeroRepository,
-        settings: SupabaseSettingsService,
         meta: SupabaseMetaService,
     ) -> None:
         self._gateway = gateway
         self._heroes = heroes
-        self._settings = settings
         self._meta = meta
         self._remote_disabled = False
         self._local = self._read_local()
@@ -514,7 +510,7 @@ class SupabaseDraftService:
         self, position: int, session_id: int | None = None,
         limit: int = 5, team: Team | None = None,
     ) -> list[tuple[Hero, float]]:
-        """[(Hero, score)] по убыванию: мета + приоритет + позиционный фит."""
+        """[(Hero, score)] по убыванию: мета + позиционный фит."""
         state = None
         if session_id is not None:
             try:
@@ -570,7 +566,6 @@ class SupabaseDraftService:
                 ally_ids = {
                     p.hero_id for p in state.picks if p.team == perspective
                 }
-        priorities = self._settings.get_position_priorities()
         meta = self._meta.get_meta_map()
         candidates: list[Recommendation] = []
         for hero in heroes:
@@ -585,16 +580,12 @@ class SupabaseDraftService:
                 win_rate = float(row.win_rate)
                 score += (win_rate - 50.0) * _META_WR_WEIGHT
                 score += float(row.pick_rate) * _PICK_RATE_WEIGHT
-            is_priority = hero.id in priorities.get(position, [])
-            if is_priority:
-                score += _PRIORITY_BONUS
             fit = position_fit(tuple(hero.roles), position)
             score += fit * _POSITION_FIT_WEIGHT
-            if row is None and fit == 0.0 and not is_priority:
+            if row is None and fit == 0.0:
                 continue
             candidates.append(Recommendation(
                 hero=hero, score=score, meta_win_rate=win_rate,
-                priority=is_priority,
             ))
         if not candidates:
             return []
@@ -629,7 +620,6 @@ class SupabaseDraftService:
                 counter=counter,
                 synergy=synergy,
                 meta_win_rate=rec.meta_win_rate,
-                priority=rec.priority,
             ))
         rescored.sort(key=lambda rec: (-rec.score, rec.hero.localized_name))
         return rescored[:limit]

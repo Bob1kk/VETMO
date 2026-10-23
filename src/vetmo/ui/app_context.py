@@ -93,7 +93,7 @@ def create_app_context() -> AppContext:
     meta = SupabaseMetaService(gateway, settings)
     settings_service = SupabaseSettingsService(gateway)
     news_service = LiveNewsService(settings, meta)
-    draft_service = SupabaseDraftService(gateway, heroes, settings_service, meta)
+    draft_service = SupabaseDraftService(gateway, heroes, meta)
     overlay_service = OverlayService(settings_service)  # type: ignore[arg-type]
     return AppContext(
         settings=settings,

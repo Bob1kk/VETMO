@@ -408,20 +408,11 @@ try {
     Invoke-InstallerRoundTrip $userSetup "VETMO.exe" "VETMO (пользователь)"
     Invoke-InstallerRoundTrip $adminSetup "VETMO-Admin.exe" "VETMO Admin" -Admin
 
-    Write-Step "Контрольные суммы"
-    $sums = foreach ($file in @($UserExe, $AdminExe, $userSetup, $adminSetup)) {
-        $hash = Get-FileHash -LiteralPath $file -Algorithm SHA256
-        "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), [IO.Path]::GetFileName($file)
-    }
-    $sumsPath = Join-Path $ReleaseDir "SHA256SUMS.txt"
-    $sums | Set-Content -LiteralPath $sumsPath -Encoding ASCII
-
     Write-Step "Готово"
     Write-Host "EXE (пользователь): $UserExe"
     Write-Host "EXE (admin):        $AdminExe"
     Write-Host "Установщик:         $userSetup"
     Write-Host "Установщик admin:   $adminSetup"
-    Write-Host "SHA256:             $sumsPath"
 }
 finally {
     Pop-Location

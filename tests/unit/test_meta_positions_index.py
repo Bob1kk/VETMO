@@ -157,11 +157,6 @@ class _HeroesStub:
         return list(self._heroes)
 
 
-class _SettingsStub:
-    def get_position_priorities(self) -> dict[int, list[int]]:
-        return {}
-
-
 class _MetaStub:
     def __init__(
         self,
@@ -211,7 +206,6 @@ def _draft_service(
     return SupabaseDraftService(
         _StubGateway(),  # type: ignore[arg-type]
         _HeroesStub(heroes),  # type: ignore[arg-type]
-        _SettingsStub(),  # type: ignore[arg-type]
         meta,  # type: ignore[arg-type]
     )
 

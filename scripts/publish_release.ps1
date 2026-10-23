@@ -87,7 +87,6 @@ function New-DefaultNotes([string]$AppVersion) {
         "3. Запустите VETMO и нажмите «Оверлей» в лаунчере.",
         "",
         "Требования: Windows 10/11 x64. Python не нужен — всё внутри установщика.",
-        "``SHA256SUMS.txt`` — контрольные суммы артефактов.",
         "",
         "### VETMO Admin",
         "``VETMO-Admin-Setup-$AppVersion.exe`` — инструмент сопровождения (мета/sync).",
@@ -119,8 +118,7 @@ if (-not $Name) {
 
 $assets = @(
     (Join-Path $ReleaseDir "VETMO-Setup-$Version.exe"),
-    (Join-Path $ReleaseDir "VETMO-Admin-Setup-$Version.exe"),
-    (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    (Join-Path $ReleaseDir "VETMO-Admin-Setup-$Version.exe")
 )
 foreach ($assetPath in $assets) {
     if (-not (Test-Path -LiteralPath $assetPath)) {

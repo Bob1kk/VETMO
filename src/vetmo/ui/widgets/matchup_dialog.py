@@ -33,7 +33,6 @@ from vetmo.ui.workers import start_worker
 _GREEN = "#43C59E"
 _YELLOW = "#E8B05A"
 _RED = "#E35D6A"
-_MUTED = "#8E99AD"
 
 _ICON_SIZE = 44
 _ROW_ICON = 26
@@ -152,8 +151,8 @@ class MatchupDialog(QDialog):
 
     # ------------------------------------------------------------- таблица --
     def _build_table(self, parent: QWidget) -> QTableWidget:
-        table = QTableWidget(0, 5, parent)
-        table.setHorizontalHeaderLabels(("#", "ГЕРОЙ", "ВИНРЕЙТ", "МАТЧИ", ""))
+        table = QTableWidget(0, 4, parent)
+        table.setHorizontalHeaderLabels(("ГЕРОЙ", "ВИНРЕЙТ", "МАТЧИ", ""))
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(_ROW_HEIGHT)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -165,13 +164,12 @@ class MatchupDialog(QDialog):
         table.setVerticalScrollMode(
             QAbstractItemView.ScrollMode.ScrollPerPixel)
         header = table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for column in (0, 2, 3, 4):
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(0, 34)
-        table.setColumnWidth(2, 92)
-        table.setColumnWidth(3, 102)
-        table.setColumnWidth(4, 26)
+        table.setColumnWidth(1, 92)
+        table.setColumnWidth(2, 102)
+        table.setColumnWidth(3, 26)
         return table
 
     # -------------------------------------------------------------- загрузка --
@@ -234,11 +232,6 @@ class MatchupDialog(QDialog):
     ) -> None:
         table.setRowCount(len(entries))
         for row_index, entry in enumerate(entries):
-            rank = QTableWidgetItem(str(row_index + 1))
-            rank.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            rank.setForeground(QColor(_MUTED))
-            table.setItem(row_index, 0, rank)
-
             pixmap, _url = resolve_icon(
                 entry.hero_id, entry.name, entry.icon_url,
                 entry.internal_name, size=_ROW_ICON,
@@ -246,26 +239,26 @@ class MatchupDialog(QDialog):
             hero = QTableWidgetItem(entry.name or f"Герой {entry.hero_id}")
             hero.setIcon(QIcon(scale_icon(pixmap, _ROW_ICON)))
             hero.setToolTip(entry.internal_name or entry.name)
-            table.setItem(row_index, 1, hero)
+            table.setItem(row_index, 0, hero)
 
             wr = QTableWidgetItem(_pct(entry.win_rate))
             wr.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             wr.setForeground(QColor(_wr_color(entry.win_rate)))
-            table.setItem(row_index, 2, wr)
+            table.setItem(row_index, 1, wr)
 
             matches = QTableWidgetItem(_thousands(entry.match_count))
             matches.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if not entry.sample_reliable:
                 matches.setForeground(QColor(_YELLOW))
                 matches.setToolTip(_LOW_SAMPLE_TOOLTIP)
-            table.setItem(row_index, 3, matches)
+            table.setItem(row_index, 2, matches)
 
             warning = QTableWidgetItem("⚠" if not entry.sample_reliable else "")
             warning.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             warning.setForeground(QColor(_YELLOW))
             if not entry.sample_reliable:
                 warning.setToolTip(_LOW_SAMPLE_TOOLTIP)
-            table.setItem(row_index, 4, warning)
+            table.setItem(row_index, 3, warning)
 
     # ---------------------------------------------------------- для тестов --
     def is_loaded(self) -> bool:
