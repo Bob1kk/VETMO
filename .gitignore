@@ -15,9 +15,18 @@ build/
 release/*
 !release/VETMO-Setup-*.exe
 !release/VETMO-Admin-Setup-*.exe
-!release/SHA256SUMS.txt
 *.egg-info/
 *.spec.bak
+
+# Локальная конфигурация AI-инструментов
+.opencode/
+opencode.json
+
+# Отладочные скрипты
+tools/_inspect_*.py
+
+# Презентация и доклад (не публикуются в GitHub)
+docs/presentation/
 
 # Секреты
 .env
