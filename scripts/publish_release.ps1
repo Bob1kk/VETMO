@@ -100,7 +100,7 @@ function New-DefaultNotes([string]$AppVersion) {
 }
 
 $initPath = Join-Path $Root "src\vetmo\__init__.py"
-$initText = Get-Content -LiteralPath $initPath -Raw
+$initText = Get-Content -LiteralPath $initPath -Raw -Encoding UTF8
 if ($initText -notmatch '__version__\s*=\s*"([^"]+)"') {
     throw "Не удалось прочитать версию из src\vetmo\__init__.py"
 }
@@ -128,7 +128,7 @@ foreach ($assetPath in $assets) {
 
 if ($NotesFile) {
     $notesPath = Resolve-Path -LiteralPath $NotesFile
-    $body = Get-Content -LiteralPath $notesPath -Raw
+    $body = Get-Content -LiteralPath $notesPath -Raw -Encoding UTF8
 } else {
     $body = New-DefaultNotes $Version
 }
