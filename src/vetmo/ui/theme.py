@@ -725,26 +725,17 @@ QLabel#overlaySuggestTitle {
     background: transparent;
     padding-top: 2px;
 }
-QFrame#overlayCard {
-    background: $panel_2;
-    border: 1px solid $border;
-    border-radius: 8px;
-}
-QFrame#overlayCard:hover { border: 1px solid $accent; }
-QFrame#overlayCard QLabel#cardName {
-    color: $text;
-    font-size: 11px;
-    font-weight: 700;
-}
-QFrame#overlayCard QLabel#cardReason {
+QLabel#overlaySuggestPos {
     color: $accent_hover;
     font-size: 9px;
+    font-weight: 700;
     background: transparent;
 }
-QFrame#overlayCard QLabel#cardWr {
-    color: $ok;
+QLabel#overlaySuggestHeroes {
+    color: $text;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
+    background: transparent;
 }
 QLabel#overlayHint { color: $muted; font-size: 9px; background: transparent; }
 """.lstrip()

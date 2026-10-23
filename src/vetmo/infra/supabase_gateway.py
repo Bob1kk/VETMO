@@ -260,14 +260,19 @@ class SupabaseGateway:
         filters: dict[str, Any] | None = None,
         order: tuple[str, bool] | None = None,
         limit: int | None = None,
+        offset: int | None = None,
     ) -> list[dict[str, Any]]:
-        """SELECT из таблицы/представления."""
+        """SELECT из таблицы/представления (offset — для страниц > 1000)."""
         def call() -> list[dict[str, Any]]:
             query = self._client().table(table).select(columns)
             query = self._apply_filters(query, filters)
             if order:
                 query = query.order(order[0], desc=order[1])
-            if limit is not None:
+            if offset is not None:
+                start = max(0, int(offset))
+                size = max(1, int(limit)) if limit is not None else 1000
+                query = query.range(start, start + size - 1)
+            elif limit is not None:
                 query = query.limit(limit)
             response = query.execute()
             return list(response.data or [])

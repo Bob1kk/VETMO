@@ -32,7 +32,7 @@ from vetmo.ui.widgets.news_widget import NewsWidget
 from vetmo.ui.widgets.priorities_dialog import PrioritiesDialog
 from vetmo.ui.workers import start_worker
 
-_RECS_PER_POSITION = 2
+_RECS_PER_POSITION = 5
 
 
 _NEWS_REFRESH_MS = 60 * 60 * 1000  # новости по таймеру: раз в час (R2, задача C)

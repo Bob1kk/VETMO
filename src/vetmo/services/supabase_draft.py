@@ -16,6 +16,7 @@ from vetmo.data.supabase_heroes import SupabaseHeroRepository
 from vetmo.domain.matchup import MatchupEntry, MatchupReport
 from vetmo.domain.models import DraftPick, DraftSession, Hero, Pick, Team
 from vetmo.domain.rank_brackets import basic_bracket_label
+from vetmo.domain.recommendation import Recommendation
 from vetmo.domain.rules import (
     TOTAL_PICKS,
     is_valid_step,
@@ -30,7 +31,16 @@ from vetmo.services.supabase_settings import SupabaseSettingsService
 logger = logging.getLogger("vetmo.draft")
 
 _PRIORITY_BONUS = 10.0
-_POSITION_FIT_WEIGHT = 5.0
+_POSITION_FIT_WEIGHT = 4.0
+_META_WR_WEIGHT = 1.0
+_PICK_RATE_WEIGHT = 0.05
+# Контр-пики важнее меты (пользователь просил подсказки от контр-пиков),
+# связки — следующий по важности сигнал.
+_COUNTER_WEIGHT = 2.5
+_SYNERGY_WEIGHT = 1.2
+# Матчапы с малой выборкой шумят: такие пары не учитываем.
+_MIN_MATCHUP_GAMES = 300
+_MATCHUP_WEIGHT_CAP = 5000
 _TOOLTIP_ROWS = 5
 
 
@@ -45,6 +55,38 @@ def _team_on_clock(state: DraftSession) -> Team | None:
         return team_for_step(state.current_step)
     except ValueError:
         return None
+
+
+def _weighted_deviation(
+    rows: list[dict[str, Any]], opponent_ids: set[int],
+) -> float:
+    """Средний винрейт пары минус 50, взвешенный по числу матчей.
+
+    Малые выборки и недостоверные пары отбрасываются: иначе контр-пики
+    «прыгают» на паре сотен игр.
+    """
+    total = 0.0
+    acc = 0.0
+    for row in rows:
+        try:
+            opponent = int(row.get("vs_hero_id") or 0)
+            raw_win_rate = row.get("win_rate")
+            if raw_win_rate is None:
+                continue
+            win_rate = float(raw_win_rate)
+            games = int(row.get("match_count") or 0)
+        except (TypeError, ValueError):
+            continue
+        if opponent not in opponent_ids or games < _MIN_MATCHUP_GAMES:
+            continue
+        if row.get("sample_reliable") is False:
+            continue
+        weight = min(games, _MATCHUP_WEIGHT_CAP)
+        total += weight
+        acc += (win_rate - 50.0) * weight
+    if total <= 0:
+        return 0.0
+    return acc / total
 
 
 class SupabaseDraftService:
@@ -485,10 +527,22 @@ class SupabaseDraftService:
         self, state: DraftSession | None, position: int,
         limit: int = 5, team: Team | None = None,
     ) -> list[tuple[Hero, float]]:
-        """Рекомендации по уже загруженному состоянию — без сетевого get_state.
+        """[(Hero, score)] по убыванию: контр-пики + связки + мета + фит."""
+        return [
+            (rec.hero, rec.score)
+            for rec in self.get_recommendation_details(
+                state, position, limit=limit, team=team)
+        ]
 
-        ``state=None`` — базовая линия без учёта пиков: нужна оверлею, чтобы
-        посчитать Δ контр-пика, не делая лишних запросов к Supabase.
+    def get_recommendation_details(
+        self, state: DraftSession | None, position: int,
+        limit: int = 5, team: Team | None = None,
+    ) -> list[Recommendation]:
+        """Рекомендации с разложением счёта (контр-пик/связка/мета).
+
+        Порядок важности для оверлея: контр-пики против врагов, затем
+        связки с уже пикнутыми союзниками, затем мета и позиционный фит.
+        ``state=None`` — только мета и фит (без сети на матчапы).
         """
         if not 1 <= position <= 5:
             raise ValueError(f"Позиция вне 1..5: {position}")
@@ -499,50 +553,77 @@ class SupabaseDraftService:
             return []
         picked: set[int] = set()
         enemy_ids: set[int] = set()
+        ally_ids: set[int] = set()
         if state is not None:
             picked = {p.hero_id for p in state.picks}
             perspective = team or _team_on_clock(state)
             if perspective is not None:
-                enemy_ids = {p.hero_id for p in state.picks if p.team != perspective}
+                enemy_ids = {
+                    p.hero_id for p in state.picks if p.team != perspective
+                }
+                ally_ids = {
+                    p.hero_id for p in state.picks if p.team == perspective
+                }
         priorities = self._settings.get_position_priorities()
         meta = self._meta.get_meta_map()
-        candidates: list[tuple[Hero, float]] = []
+        candidates: list[Recommendation] = []
         for hero in heroes:
             if hero.id in picked:
                 continue
             row = meta.get(hero.id)
             if row is not None and row.positions and position not in row.positions:
-                continue  # редкая/непопулярная позиция не должна рекомендоваться
+                continue  # позиция не входит в реальные позиции героя
             score = 0.0
+            win_rate: float | None = None
             if row is not None:
-                score += (float(row.win_rate) - 50.0) * 2.0
-                score += float(row.pick_rate) * 0.1
-            if hero.id in priorities.get(position, []):
+                win_rate = float(row.win_rate)
+                score += (win_rate - 50.0) * _META_WR_WEIGHT
+                score += float(row.pick_rate) * _PICK_RATE_WEIGHT
+            is_priority = hero.id in priorities.get(position, [])
+            if is_priority:
                 score += _PRIORITY_BONUS
             fit = position_fit(tuple(hero.roles), position)
             score += fit * _POSITION_FIT_WEIGHT
-            if row is None and fit == 0.0 and hero.id not in priorities.get(position, []):
+            if row is None and fit == 0.0 and not is_priority:
                 continue
-            candidates.append((hero, score))
-        candidates.sort(key=lambda item: (-item[1], item[0].localized_name))
-        if not enemy_ids or not candidates:
+            candidates.append(Recommendation(
+                hero=hero, score=score, meta_win_rate=win_rate,
+                priority=is_priority,
+            ))
+        if not candidates:
+            return []
+        if not enemy_ids and not ally_ids:
+            candidates.sort(key=lambda rec: (-rec.score, rec.hero.localized_name))
             return candidates[:limit]
-        # Контрпики считаем только для верхушки: один bulk-запрос вместо
-        # 127 последовательных запросов к Supabase.
-        top = candidates[: max(limit * 4, 30)]
-        matchup_map = self._meta.get_matchups_bulk(
-            [hero.id for hero, _ in top], list(enemy_ids),
+        # Один bulk-запрос на всех кандидатов вместо 127 отдельных.
+        hero_ids = [rec.hero.id for rec in candidates]
+        matchup_map = (
+            self._meta.get_matchups_bulk(hero_ids, list(enemy_ids))
+            if enemy_ids else {}
         )
-        rescored: list[tuple[Hero, float]] = []
-        for hero, score in top:
-            for matchup in matchup_map.get(hero.id, []):
-                try:
-                    wr = float(matchup.get("win_rate") or 50.0)
-                except (TypeError, ValueError):
-                    continue
-                score += (wr - 50.0) * 0.1
-            rescored.append((hero, score))
-        rescored.sort(key=lambda item: (-item[1], item[0].localized_name))
+        synergy_map = (
+            self._meta.get_synergies_bulk(hero_ids, list(ally_ids))
+            if ally_ids else {}
+        )
+        rescored: list[Recommendation] = []
+        for rec in candidates:
+            counter = _weighted_deviation(
+                matchup_map.get(rec.hero.id, []), enemy_ids)
+            synergy = _weighted_deviation(
+                synergy_map.get(rec.hero.id, []), ally_ids)
+            rescored.append(Recommendation(
+                hero=rec.hero,
+                score=(
+                    rec.score
+                    + counter * _COUNTER_WEIGHT
+                    + synergy * _SYNERGY_WEIGHT
+                ),
+                counter=counter,
+                synergy=synergy,
+                meta_win_rate=rec.meta_win_rate,
+                priority=rec.priority,
+            ))
+        rescored.sort(key=lambda rec: (-rec.score, rec.hero.localized_name))
         return rescored[:limit]
 
     def get_matchup_report(

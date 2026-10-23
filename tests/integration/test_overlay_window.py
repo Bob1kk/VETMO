@@ -101,13 +101,17 @@ def test_overlay_flags_always_on_top_no_focus_steal(overlay_window) -> None:
     assert window.focusPolicy() == Qt.FocusPolicy.NoFocus
 
 
-def _entry_names(cards: list) -> list[str]:
-    """Имена героев на карточках позиции (whitebox: лейбл name)."""
-    return [card._name.text() for card in cards]
+def _entry_names(column) -> list[str]:
+    """Имена героев в строках подсказок колонки (whitebox: лейбл names)."""
+    rows = [
+        column._suggestions.itemAt(index).widget()
+        for index in range(column._suggestions.count())
+    ]
+    return [row._names.text() for row in rows if row is not None]
 
 
 def test_fill_shows_pick_slots_and_suggestions(overlay_window) -> None:
-    """FR-004: клетки 1..5 на команду и подсказки по выбранным героям."""
+    """FR-004: клетки 1..5 на команду и подсказки по позициям."""
     window, settings_service, draft_service, smaker = overlay_window
     window.apply_snapshot(_make_vm(
         settings_service, draft_service, smaker).compute_all(limit=2))
@@ -122,11 +126,13 @@ def test_fill_shows_pick_slots_and_suggestions(overlay_window) -> None:
         assert sorted(column._slots) == [1, 2, 3, 4, 5]
         for position in range(1, 6):
             assert column._slots[position].hero() is None  # пока ничего не пикнули
-        names = _entry_names(column._cards)
-        assert any(name in all_names for name in names), (
-            f"{team}: подсказки пусты: {names}")
-    # приоритет позиции 1 — первым в подсказках Radiant
-    assert window._radiant._cards[0]._name.text() == "Hero 100"
+        names = _entry_names(column)
+        assert len(names) == 5  # строка на каждую незанятую позицию
+        assert any(
+            hero_name in " ".join(names) for hero_name in all_names
+        ), f"{team}: подсказки пусты: {names}"
+    # приоритет позиции 1 — первым в строке позиции 1
+    assert "Hero 100" in _entry_names(window._radiant)[0]
 
 
 def test_pick_slot_click_requests_hero(overlay_window, qtbot) -> None:

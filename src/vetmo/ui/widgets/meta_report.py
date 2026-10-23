@@ -50,9 +50,9 @@ _GREY = "#8E99AD"
 _ICON_SIZE = 36
 _ROW_HEIGHT = 52
 
-_COL_RANK, _COL_HERO, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK, _COL_BAN = range(7)
+_COL_RANK, _COL_HERO, _COL_WR, _COL_DWR, _COL_PICK, _COL_BAN = range(6)
 _HEADERS = (
-    "#", "ГЕРОЙ", "ПОЗИЦИИ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "БАНЫ",
+    "#", "ГЕРОЙ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "БАНЫ",
 )
 
 _POSITION_OPTIONS: tuple[tuple[str, int], ...] = (
@@ -104,61 +104,6 @@ def _wr_color(value: float | None) -> str:
     if value >= 50.0:
         return _YELLOW
     return _RED
-
-
-def _as_number(value: object) -> float | None:
-    """Число из любого источника (None, str, Decimal) либо None."""
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_count(value: object) -> int | None:
-    number = _as_number(value)
-    return int(number) if number is not None else None
-
-
-def _short_pct(value: float, digits: int = 1) -> str:
-    """«54,2%» / «72%» — без лишних нулей после запятой."""
-    text = f"{float(value):.{digits}f}".replace(".", ",")
-    if digits and text.endswith(",0"):
-        text = text[:-2]
-    return text + "%"
-
-
-def _thousands(value: int) -> str:
-    """«12 340» — пробел как разделитель тысяч."""
-    return f"{int(value):,}".replace(",", " ")
-
-
-def _detail_value(details: object, position: int, key: str) -> object:
-    """Значение из ``position_details`` (dict[int, PositionStat] и dict-строки)."""
-    if not isinstance(details, dict):
-        return None
-    entry = details.get(position)
-    if entry is None:
-        return None
-    if isinstance(entry, dict):
-        return entry.get(key)
-    return getattr(entry, key, None)
-
-
-def _position_tooltip(position: int, details: object) -> str:
-    """Тултип бейджа: доля пиков/WR/матчи, если детали пришли из данных."""
-    share = _as_number(_detail_value(details, position, "pick_share"))
-    win_rate = _as_number(_detail_value(details, position, "win_rate"))
-    matches = _as_count(_detail_value(details, position, "match_count"))
-    if share is None and win_rate is None and matches is None:
-        return f"Позиция {position} · популярная позиция героя в срезе"
-    parts = [f"Позиция {position}"]
-    if share is not None:
-        parts.append(f"{_short_pct(share, 0)} пиков героя")
-    if win_rate is not None:
-        parts.append(f"WR {_short_pct(win_rate)}")
-    if matches is not None:
-        parts.append(f"{_thousands(matches)} матчей")
-    return " · ".join(parts)
 
 
 _BAN_SCOPE_LABELS = {
@@ -239,74 +184,6 @@ class DeltaCell(QLabel):
         else:
             self.setObjectName("deltaPos" if value >= 0 else "deltaNeg")
         self.setText(_delta_text(value))
-
-
-class PositionCell(QWidget):
-    """Компактные бейджи популярных позиций 1..5 (максимум 3 + «+N»).
-
-    Если ``sample_reliable=False`` — показывает предупреждение о малой
-    выборке (метрика может быть неточной).
-    """
-
-    def __init__(
-        self, positions: list[int], parent: QWidget,
-        details: object | None = None,
-        sample_reliable: bool = True,
-    ) -> None:
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(6, 0, 4, 0)
-        row.setSpacing(3)
-        ordered = self._ordered(positions, details)
-        if not ordered:
-            empty = QLabel("—", self)
-            empty.setObjectName("nodata")
-            empty.setToolTip(
-                "Нет популярных позиций в выбранном срезе")
-            row.addWidget(empty)
-        else:
-            for position in ordered[:3]:
-                badge = QLabel(str(position), self)
-                badge.setObjectName("posBadge")
-                badge.setFixedSize(21, 21)
-                badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                badge.setToolTip(_position_tooltip(position, details))
-                row.addWidget(badge)
-            if len(ordered) > 3:
-                more = QLabel(f"+{len(ordered) - 3}", self)
-                more.setObjectName("mutedSmall")
-                hidden = ordered[3:]
-                more.setToolTip(
-                    "Ещё позиции: " + ", ".join(
-                        _position_tooltip(position, details)
-                        for position in hidden))
-                row.addWidget(more)
-        if not sample_reliable:
-            hint = QLabel("⚠", self)
-            hint.setObjectName("mutedSmall")
-            hint.setToolTip(
-                "Малая выборка — метрика может быть неточной "
-                "(меньше 50 матчей за окно)")
-            row.addWidget(hint)
-        row.addStretch(1)
-
-    @staticmethod
-    def _ordered(positions: list[int], details: object | None) -> list[int]:
-        """Популярные позиции; при наличии деталей — по доле пиков."""
-        ordered = [int(p) for p in positions]
-        if not isinstance(details, dict) or not details:
-            return ordered
-        ordered.sort(
-            key=lambda position: (
-                _as_number(_detail_value(details, position, "pick_share"))
-                is None,
-                -(_as_number(_detail_value(details, position, "pick_share"))
-                  or 0.0),
-                position,
-            ),
-        )
-        return ordered
 
 
 class HeroCell(QWidget):
@@ -497,13 +374,12 @@ class MetaReportWidget(QFrame):
         header = table.horizontalHeader()
         header.setSectionResizeMode(_COL_HERO, QHeaderView.ResizeMode.Stretch)
         for column in (
-            _COL_RANK, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK,
+            _COL_RANK, _COL_WR, _COL_DWR, _COL_PICK,
             _COL_BAN,
         ):
             header.setSectionResizeMode(
                 column, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(_COL_RANK, 36)
-        table.setColumnWidth(_COL_POS, 88)
         table.setColumnWidth(_COL_WR, 142)
         table.setColumnWidth(_COL_DWR, 112)
         table.setColumnWidth(_COL_PICK, 120)
@@ -699,14 +575,6 @@ class MetaReportWidget(QFrame):
         hero_cell.clicked.connect(self._open_matchups)
         self._table.setCellWidget(index, _COL_HERO, hero_cell)
         cells.append(hero_cell)
-
-        position_cell = PositionCell(
-            row.positions, self._table,
-            getattr(row, "position_details", None),
-            getattr(row, "sample_reliable", True),
-        )
-        self._table.setCellWidget(index, _COL_POS, position_cell)
-        cells.append(position_cell)
 
         wr_cell = RateCell(
             row.win_rate, _wr_color(row.win_rate), self._table,

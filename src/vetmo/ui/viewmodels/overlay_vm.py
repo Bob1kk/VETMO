@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from vetmo.domain.meta_row import MetaRow
 from vetmo.domain.models import DraftSession, Hero, Team
+from vetmo.domain.recommendation import Recommendation
 from vetmo.domain.rules import TOTAL_PICKS
 from vetmo.services.draft_service import DraftService
 from vetmo.services.news_service import NewsService
@@ -141,7 +142,24 @@ class OverlayViewModel:
         meta_wr: dict[int, float],
         limit: int,
     ) -> list[OverlayEntry]:
-        """Рекомендации позиции с причинами (приоритет > контр-пик > мета)."""
+        """Рекомендации позиции с причинами (контр-пик > связка > мета)."""
+        details = self._recommendation_details(state, position, team, limit)
+        if details is not None:
+            return [
+                OverlayEntry(
+                    hero=rec.hero,
+                    score=rec.score,
+                    reason=_reason_from_detail(rec, priorities, position),
+                    win_rate=(
+                        rec.meta_win_rate
+                        if rec.meta_win_rate is not None
+                        else meta_wr.get(rec.hero.id)
+                    ),
+                    position=position,
+                )
+                for rec in details
+            ]
+        # Fallback для DraftService без разложения счёта.
         recs = self._draft.get_recommendations_for(
             state, position, limit=limit, team=team)
         baseline: dict[int, float] = {}
@@ -161,6 +179,18 @@ class OverlayViewModel:
                 win_rate=meta_wr.get(hero.id), position=position,
             ))
         return entries
+
+    def _recommendation_details(
+        self, state: DraftSession, position: int, team: Team, limit: int,
+    ) -> list[Recommendation] | None:
+        """Разложение счёта из SupabaseDraftService (None — нет метода)."""
+        loader = getattr(self._draft, "get_recommendation_details", None)
+        if not callable(loader):
+            return None
+        try:
+            return list(loader(state, position, limit=limit, team=team))
+        except Exception:  # noqa: BLE001 — оверлей не должен падать
+            return None
 
     def _meta_win_rates(self) -> dict[int, float]:
         """hero_id -> винрейт среза «все ранги» для подписи WR на карточке.
@@ -263,4 +293,23 @@ def _classify_reason(
     return "Подбор по позициям"
 
 
-_COUNTER_DELTA = 1.0
+def _reason_from_detail(
+    rec: Recommendation,
+    priorities: dict[int, list[int]],
+    position: int,
+) -> str:
+    """Причина карточки по разложению счёта (контр-пик > связка > мета)."""
+    if rec.priority or rec.hero.id in priorities.get(position, []):
+        return "Приоритет позиции"
+    if rec.counter >= _COUNTER_DELTA:
+        return "Контр-пик"
+    if rec.synergy >= _SYNERGY_DELTA:
+        return "Связка"
+    if rec.meta_win_rate is not None and rec.meta_win_rate >= _META_WR_MIN:
+        return "Мета"
+    return "Подбор по позициям"
+
+
+_COUNTER_DELTA = 2.0
+_SYNERGY_DELTA = 1.5
+_META_WR_MIN = 51.0

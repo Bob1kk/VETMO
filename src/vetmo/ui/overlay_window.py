@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -29,13 +28,13 @@ from PySide6.QtWidgets import (
 from vetmo.domain.models import Hero
 from vetmo.services.settings_service import SettingsService
 from vetmo.ui.monitor import overlay_top_left, resolve_screen
-from vetmo.ui.viewmodels.overlay_vm import OverlaySnapshot
-from vetmo.ui.widgets.hero_card import HeroCard
+from vetmo.ui.viewmodels.overlay_vm import OverlayEntry, OverlaySnapshot
 from vetmo.ui.widgets.hero_pick_dialog import HeroPickDialog
 from vetmo.ui.widgets.pick_slot import PickSlot
 from vetmo.ui.workers import start_worker
 
-_SUGGESTION_CARDS = 4
+# Сколько имён героев показывать в строке одной позиции (остальные — «+N»).
+_SUGGESTION_HEROES = 4
 
 
 class DragHeader(QFrame):
@@ -86,8 +85,61 @@ class DragHeader(QFrame):
         self.moved.emit(max(0, x), max(0, y))
 
 
+class SuggestionRow(QWidget):
+    """Строка подсказок незанятой позиции: «Поз. 5 · A · B · C».
+
+    Полный список с винрейтом и причиной — в тултипе: в оверлее важно
+    показать больше героев на каждую позицию, не раздувая высоту окна.
+    """
+
+    def __init__(
+        self,
+        position: int,
+        entries: list[OverlayEntry],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        badge = QLabel(f"Поз. {position}", self)
+        badge.setObjectName("overlaySuggestPos")
+        badge.setFixedWidth(38)
+
+        names = " · ".join(
+            entry.hero.localized_name for entry in entries[:_SUGGESTION_HEROES]
+        )
+        if len(entries) > _SUGGESTION_HEROES:
+            names += f" · +{len(entries) - _SUGGESTION_HEROES}"
+        text = QLabel(names or "—", self)
+        text.setObjectName("overlaySuggestHeroes")
+        text.setWordWrap(False)
+        self._names = text
+
+        row.addWidget(badge, 0)
+        row.addWidget(text, 1)
+
+        tooltip = self._tooltip(entries)
+        self.setToolTip(tooltip)
+        badge.setToolTip(tooltip)
+        text.setToolTip(tooltip)
+
+    @staticmethod
+    def _tooltip(entries: list[OverlayEntry]) -> str:
+        lines: list[str] = []
+        for entry in entries:
+            parts = [entry.hero.localized_name]
+            wr = entry.wr_text()
+            if wr:
+                parts.append(wr)
+            parts.append(entry.reason)
+            lines.append(" · ".join(parts))
+        return "\n".join(lines)
+
+
 class OverlayColumn(QFrame):
-    """Колонка команды: 5 клеток пиков + подсказки по выбранным героям."""
+    """Колонка команды: 5 клеток пиков + подсказки по незанятым позициям."""
 
     pick_clicked = Signal(str, int)
     clear_clicked = Signal(str, int)
@@ -133,17 +185,14 @@ class OverlayColumn(QFrame):
         suggest_caption.setObjectName("overlaySuggestTitle")
         layout.addWidget(suggest_caption)
 
-        self._cards = [HeroCard(self) for _ in range(_SUGGESTION_CARDS)]
-        for card in self._cards:
-            card.setObjectName("overlayCard")
-            card.setSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-            card.setMaximumHeight(48)
-            layout.addWidget(card)
+        self._suggestions = QVBoxLayout()
+        self._suggestions.setContentsMargins(0, 0, 0, 0)
+        self._suggestions.setSpacing(2)
+        layout.addLayout(self._suggestions)
 
     # --- данные ---
     def fill(self, snapshot: OverlaySnapshot) -> None:
-        """Заполняет клетки пиками, а карточки — подсказками по драфту."""
+        """Заполняет клетки пиками, а строки — подсказками по позициям."""
         picked = snapshot.picked.get(self._team, {})
         for position, slot in self._slots.items():
             hero = picked.get(position)
@@ -153,18 +202,23 @@ class OverlayColumn(QFrame):
             slot.set_hero(hero)
         self._refresh_count()
 
-        entries = snapshot.suggestions.get(self._team, [])
-        for index, card in enumerate(self._cards):
-            card.show()
-            if index < len(entries):
-                entry = entries[index]
-                card.show_hero(
-                    entry.hero,
-                    reason=entry.reason_text(),
-                    wr_text=entry.wr_text(),
-                )
-            else:
-                card.set_empty("—")
+        self._clear_suggestions()
+        columns = snapshot.columns.get(self._team, {})
+        for position in sorted(columns):
+            self._suggestions.addWidget(
+                SuggestionRow(position, columns[position], self))
+        if not columns:
+            done = QLabel("Все позиции выбраны", self)
+            done.setObjectName("overlaySuggestHeroes")
+            self._suggestions.addWidget(done)
+
+    def _clear_suggestions(self) -> None:
+        """Удаляет строки предыдущего снимка (иначе они копятся)."""
+        while self._suggestions.count():
+            item = self._suggestions.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.deleteLater()
 
     def set_slot_hero(self, position: int, hero: Hero | None) -> None:
         """Немедленно ставит/убирает героя в клетке (до пересчёта снимка)."""
@@ -187,11 +241,6 @@ class OverlayColumn(QFrame):
         """Прячет/показывает колонку (Dire настраивается в лаунчере)."""
         self.setVisible(visible)
 
-    def set_matchup_loader(self, loader) -> None:
-        """Раздаёт loader(hero_id) всем карточкам колонки (тултипы R2)."""
-        for card in self._cards:
-            card.set_matchup_loader(loader)
-
 
 class OverlayWindow(QWidget):
     """Окно оверлея, привязываемое в OverlayService через getattr-API."""
@@ -208,6 +257,7 @@ class OverlayWindow(QWidget):
         self.setWindowTitle("VETMO Overlay")
         self._settings = settings_service
         self._heroes_loader = None
+        self._matchup_loader = None
         self._current_picked: dict[str, dict[int, Hero | None]] = {
             "radiant": {}, "dire": {},
         }
@@ -284,9 +334,8 @@ class OverlayWindow(QWidget):
         self._update_gear_state()
 
     def set_matchup_loader(self, loader) -> None:
-        """loader(hero_id) -> (strong, weak) | None — ленивые тултипы (B)."""
-        for column in (self._radiant, self._dire):
-            column.set_matchup_loader(loader)
+        """Совместимость с MainWindow: подсказки-строки без rich-тултипов."""
+        self._matchup_loader = loader
 
     def set_heroes_loader(self, loader) -> None:
         """loader() -> list[Hero]: каталог для диалога выбора героя."""

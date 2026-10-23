@@ -7,7 +7,13 @@ UI получает уже агрегированные строки через 
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from vetmo.domain.meta_row import MetaRow, PatchInfo, PositionStat
@@ -56,11 +62,148 @@ _HERO_COLUMNS = (
 # на ранг) и агрегируется по match_count.
 _ALL_RANKS = (1, 2, 3, 4, 5, 6, 7, 8)
 
-# Позиции героя почти не зависят от ранга, поэтому для rank_tier=0 (где
-# per-position строк нет) берём один быстрый срез Immortal. Пять запросов
-# «все ранги + позиция» иногда упираются в троттлинг Supabase (20+ с), а
-# один ранг — доли секунды.
-_POSITION_REFERENCE_RANK = 8
+# Позиции героя считаем по доле его игр на позиции: агрегируем match_count
+# по всем рангам 1..8 (большая выборка) и оставляем позиции, где герой
+# реально играет. 10% отсекает случайные позиции (например, Medusa pos 2).
+_POSITION_MIN_SHARE = 10.0
+
+# PostgREST отдаёт максимум 1000 строк за запрос — читаем страницами.
+_POSITION_PAGE = 1000
+_POSITION_MAX_ROWS = 6000
+
+# Позиции меняются медленно: держим их на диске, чтобы рестарт приложения
+# не ждал Supabase. Просроченный кэш отдаётся сразу, обновление — в фоне.
+_POSITION_CACHE_FILE = "positions_cache.json"
+_POSITION_CACHE_TTL_S = 24 * 3600
+
+
+def _positions_cache_path() -> Path:
+    """Путь к дисковому кэшу позиций (%APPDATA%/VETMO/...)."""
+    appdata = os.environ.get("APPDATA")
+    base = Path(appdata) if appdata else Path.home() / ".local" / "share"
+    return base / "VETMO" / _POSITION_CACHE_FILE
+
+
+def _positions_cache_key(patch_id: int, window: int, mode: str) -> str:
+    return f"{patch_id}:{window}:{mode}"
+
+
+def _read_positions_cache(
+    key: str, *, allow_stale: bool = False,
+) -> dict[int, dict[int, PositionStat]] | None:
+    """Читает индекс позиций с диска (свежий или просроченный)."""
+    try:
+        payload = json.loads(_positions_cache_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("key") != key:
+        return None
+    if not allow_stale:
+        raw_saved = payload.get("saved_at")
+        if raw_saved is None:
+            return None
+        try:
+            age = time.time() - float(raw_saved)
+        except (TypeError, ValueError):
+            return None
+        if age > _POSITION_CACHE_TTL_S:
+            return None
+    heroes = payload.get("heroes")
+    if not isinstance(heroes, dict):
+        return None
+    index: dict[int, dict[int, PositionStat]] = {}
+    for raw_hero, raw_positions in heroes.items():
+        try:
+            hero_id = int(raw_hero)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(raw_positions, dict):
+            continue
+        details: dict[int, PositionStat] = {}
+        for raw_pos, raw_stat in raw_positions.items():
+            try:
+                pos = int(raw_pos)
+                share, win_rate, matches = raw_stat
+                details[pos] = PositionStat(
+                    position=pos,
+                    pick_share=float(share) if share is not None else None,
+                    win_rate=float(win_rate) if win_rate is not None else None,
+                    match_count=int(matches),
+                )
+            except (TypeError, ValueError):
+                continue
+        if details:
+            index[hero_id] = details
+    return index or None
+
+
+def _write_positions_cache(
+    key: str, index: dict[int, dict[int, PositionStat]],
+) -> None:
+    """Атомарно сохраняет индекс позиций на диск (best effort)."""
+    payload = {
+        "key": key,
+        "saved_at": time.time(),
+        "heroes": {
+            str(hero_id): {
+                str(pos): [stat.pick_share, stat.win_rate, stat.match_count]
+                for pos, stat in details.items()
+            }
+            for hero_id, details in index.items()
+        },
+    }
+    path = _positions_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        logger.info("Кэш позиций не сохранён: %s", type(exc).__name__)
+
+
+def _build_positions_index(
+    rows: list[dict[str, Any]],
+) -> dict[int, dict[int, PositionStat]]:
+    """Агрегирует per-position строки в hero_id -> position -> PositionStat.
+
+    ``pick_share`` — доля игр героя на позиции (сумма match_count по всем
+    рангам), поэтому позиция отражает реальную практику, а не один ранг.
+    """
+    matches: dict[int, dict[int, int]] = {}
+    win_acc: dict[int, dict[int, float]] = {}
+    for row in rows:
+        hero_id = _as_int(row.get("hero_id"))
+        pos = _as_int(row.get("position"))
+        count = _as_int(row.get("match_count")) or 0
+        if hero_id is None or pos is None or not 1 <= pos <= 5 or count <= 0:
+            continue
+        by_pos = matches.setdefault(hero_id, {})
+        by_pos[pos] = by_pos.get(pos, 0) + count
+        wr = _as_float(row.get("win_rate"))
+        if wr is not None:
+            acc = win_acc.setdefault(hero_id, {})
+            acc[pos] = acc.get(pos, 0.0) + wr * count
+    index: dict[int, dict[int, PositionStat]] = {}
+    for hero_id, by_pos in matches.items():
+        total = sum(by_pos.values())
+        if total <= 0:
+            continue
+        details: dict[int, PositionStat] = {}
+        for pos, count in by_pos.items():
+            share = 100.0 * count / total
+            if share < _POSITION_MIN_SHARE:
+                continue
+            wr_sum = win_acc.get(hero_id, {}).get(pos)
+            details[pos] = PositionStat(
+                position=pos,
+                pick_share=round(share, 1),
+                win_rate=round(wr_sum / count, 2) if wr_sum is not None else None,
+                match_count=count,
+            )
+        if details:
+            index[hero_id] = details
+    return index
 
 
 def _weighted_avg(rows: list[dict[str, Any]], field: str) -> float | None:
@@ -275,6 +418,9 @@ class SupabaseMetaService:
         self._positions_cache: dict[
             tuple[int, int, str], dict[int, dict[int, PositionStat]],
         ] = {}
+        self._positions_refreshing: set[tuple[int, int, str]] = set()
+        self._positions_refresh_lock = threading.Lock()
+        self._positions_fetch_lock = threading.Lock()
 
     @property
     def period_end(self) -> str | None:
@@ -458,61 +604,126 @@ class SupabaseMetaService:
             )
         enriched = _enrich_with_heroes(rows, self._hero_rows(), patch.version)
         if rank == 0:
-            # В rank_tier=0 нет per-position строк — позиции берём из
-            # быстрого среза Immortal, иначе фильтр рекомендаций пуст.
+            # В rank_tier=0 нет per-position строк — позиции считаем по
+            # доле игр на всех рангах, иначе фильтр рекомендаций пуст.
             self._attach_positions_index(enriched, patch.id)
         return enriched
 
     def _positions_index(
         self, patch_id: int,
     ) -> dict[int, dict[int, PositionStat]]:
-        """hero_id -> position -> PositionStat из одного быстрого среза.
+        """hero_id -> position -> PositionStat по доле игр на позиции.
 
-        Нужен для rank_tier=0: там per-position строк нет, и без индекса
-        фильтр рекомендаций пропускал carry-героев на позицию 5.
+        В rank_tier=0 нет per-position строк, поэтому агрегируем match_count
+        по всем рангам 1..8: у героя остаются позиции, где он реально играет
+        большую часть матчей (порог ``_POSITION_MIN_SHARE``). Immortal-срез
+        для этого не годится: там популярность позиций сильно смещена.
+
+        Кэш трёхуровневый: память -> диск (свежий) -> диск (просроченный,
+        отдаётся сразу с фоновым обновлением). Сеть дергаем только при
+        полном отсутствии кэша.
         """
         key = (int(patch_id), int(self._settings.meta_window_days), "ALL_PICK_RANKED")
         cached = self._positions_cache.get(key)
         if cached is not None:
             return cached
-        if not self._gateway.is_configured:
-            return {}
-        try:
-            rows = self._gateway.select(
+        # Один поток собирает индекс, остальные ждут его результат: иначе
+        # мета-отчёт и оверлей параллельно шлют одинаковые тяжёлые запросы.
+        with self._positions_fetch_lock:
+            cached = self._positions_cache.get(key)
+            if cached is not None:
+                return cached
+            cache_key = _positions_cache_key(*key)
+            fresh = _read_positions_cache(cache_key)
+            if fresh is not None:
+                self._positions_cache[key] = fresh
+                return fresh
+            stale = _read_positions_cache(cache_key, allow_stale=True)
+            if stale is not None:
+                self._positions_cache[key] = stale
+                self._refresh_positions_async(key)
+                return stale
+            if not self._gateway.is_configured:
+                return {}
+            try:
+                rows = self._fetch_position_rows(key)
+            except Exception as exc:  # noqa: BLE001 - без индекса фильтр слабее
+                logger.warning(
+                    "Позиции героев не получены: %s", type(exc).__name__)
+                return {}
+            index = _build_positions_index(rows)
+            if index:
+                self._positions_cache[key] = index
+                _write_positions_cache(cache_key, index)
+            return index
+
+    def _fetch_position_rows(self, key: tuple[int, int, str]) -> list[dict[str, Any]]:
+        """Читает per-position строки всех рангов страницами (параллельно).
+
+        Две страницы запрашиваются одновременно: при троттлинге Supabase один
+        select может идти 20 с, и последовательные страницы дают 40 с.
+        """
+        filters = {
+            "patch_id": key[0],
+            "rank_tier": ("in", list(_ALL_RANKS)),
+            "window_days": key[1],
+            "game_mode": key[2],
+            "is_popular": True,
+            "position": ("in", [1, 2, 3, 4, 5]),
+        }
+
+        def page(offset: int) -> list[dict[str, Any]]:
+            return self._gateway.select(
                 "vetmo_meta",
                 columns=_POSITION_COLUMNS,
-                filters={
-                    "patch_id": key[0],
-                    "rank_tier": _POSITION_REFERENCE_RANK,
-                    "window_days": key[1],
-                    "game_mode": key[2],
-                    "is_popular": True,
-                    "position": ("in", [1, 2, 3, 4, 5]),
-                },
-                limit=2000,
+                filters=filters,
+                limit=_POSITION_PAGE,
+                offset=offset,
             )
-        except Exception as exc:  # noqa: BLE001 - без индекса фильтр слабее
-            logger.warning("Позиции героев не получены: %s", type(exc).__name__)
-            return {}
-        index: dict[int, dict[int, PositionStat]] = {}
-        for row in rows:
-            hero_id = _as_int(row.get("hero_id"))
-            pos = _as_int(row.get("position"))
-            if hero_id is None or pos is None or not 1 <= pos <= 5:
-                continue
-            index.setdefault(hero_id, {})[pos] = PositionStat(
-                position=pos,
-                pick_share=_as_float(row.get("pick_share")),
-                win_rate=_as_float(row.get("win_rate")),
-                match_count=_as_int(row.get("match_count")) or 0,
-            )
-        self._positions_cache[key] = index
-        return index
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = list(pool.map(page, (0, _POSITION_PAGE)))
+        rows = list(first) + list(second)
+        if len(second) >= _POSITION_PAGE:
+            offset = 2 * _POSITION_PAGE
+            while offset < _POSITION_MAX_ROWS:
+                more = page(offset)
+                rows.extend(more)
+                if len(more) < _POSITION_PAGE:
+                    break
+                offset += _POSITION_PAGE
+        return rows
+
+    def _refresh_positions_async(self, key: tuple[int, int, str]) -> None:
+        """Обновляет просроченный индекс позиций в фоне (без блокировки UI)."""
+        with self._positions_refresh_lock:
+            if key in self._positions_refreshing:
+                return
+            self._positions_refreshing.add(key)
+
+        def job() -> None:
+            try:
+                index = _build_positions_index(self._fetch_position_rows(key))
+                if index:
+                    self._positions_cache[key] = index
+                    _write_positions_cache(_positions_cache_key(*key), index)
+            except Exception as exc:  # noqa: BLE001 - фон не должен падать
+                logger.info(
+                    "Фоновое обновление позиций не удалось: %s",
+                    type(exc).__name__,
+                )
+            finally:
+                with self._positions_refresh_lock:
+                    self._positions_refreshing.discard(key)
+
+        threading.Thread(
+            target=job, name="vetmo-positions", daemon=True,
+        ).start()
 
     def _attach_positions_index(
         self, rows: list[dict[str, Any]], patch_id: int,
     ) -> None:
-        """Добавляет позиции героев туда, где их нет (срез rank_tier=0)."""
+        """Ставит героям позиции по доле игр (срез rank_tier=0)."""
         index = self._positions_index(patch_id)
         if not index:
             return
@@ -521,8 +732,11 @@ class SupabaseMetaService:
             details = index.get(hero_id) if hero_id is not None else None
             if not details:
                 continue
-            if not row.get("positions"):
-                row["positions"] = sorted(details)
+            # Порядок — по убыванию доли игр: первая позиция основная.
+            row["positions"] = sorted(
+                details,
+                key=lambda pos: -(details[pos].pick_share or 0.0),
+            )
             if not row.get("position_details"):
                 row["position_details"] = {
                     pos: {
@@ -615,20 +829,27 @@ class SupabaseMetaService:
         hero_ids: list[int],
         vs_ids: list[int],
         patch_id: int | None = None,
+        kind: str = "vs",
     ) -> dict[int, list[dict[str, Any]]]:
-        """Матчапы для набора героев против набора врагов — одним запросом."""
+        """Матчапы для набора героев против набора врагов — одним запросом.
+
+        ``kind="vs"`` — винрейт героя против врага (контр-пик),
+        ``kind="with"`` — винрейт пары союзников (связка).
+        """
         patch = self.find_patch(patch_id)
         if patch is None or not hero_ids or not vs_ids:
             return {}
         try:
             rows = self._gateway.select(
                 "vetmo_hero_matchups",
-                columns="hero_id,vs_hero_id,win_rate,match_count",
+                columns=(
+                    "hero_id,vs_hero_id,win_rate,match_count,sample_reliable"
+                ),
                 filters={
                     "patch_id": patch.id,
                     "hero_id": ("in", [int(h) for h in hero_ids]),
                     "vs_hero_id": ("in", [int(h) for h in vs_ids]),
-                    "kind": "vs",
+                    "kind": kind,
                     "rank_bracket": "ALL",
                 },
                 limit=5000,
@@ -640,6 +861,34 @@ class SupabaseMetaService:
             hero_id = _as_int(row.get("hero_id"))
             if hero_id is not None:
                 result.setdefault(hero_id, []).append(row)
+        return result
+
+    def get_synergies_bulk(
+        self,
+        hero_ids: list[int],
+        partner_ids: list[int],
+        patch_id: int | None = None,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Связки кандидатов с уже пикнутыми союзниками.
+
+        Данные хранят только топ-связки героя, поэтому читаем в обе стороны:
+        из списка кандидата и из списка союзника — так покрытие выше.
+        """
+        result = self.get_matchups_bulk(
+            hero_ids, partner_ids, patch_id=patch_id, kind="with",
+        )
+        reverse = self.get_matchups_bulk(
+            partner_ids, hero_ids, patch_id=patch_id, kind="with",
+        )
+        for partner_id, rows in reverse.items():
+            for row in rows:
+                hero_id = _as_int(row.get("vs_hero_id"))
+                if hero_id is None:
+                    continue
+                mirrored = dict(row)
+                mirrored["hero_id"] = hero_id
+                mirrored["vs_hero_id"] = partner_id
+                result.setdefault(hero_id, []).append(mirrored)
         return result
 
     def get_matchups(self, hero_id: int, patch_id: int | None = None) -> list[dict[str, Any]]:
