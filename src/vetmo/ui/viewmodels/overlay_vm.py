@@ -3,13 +3,14 @@
 Причины рекомендации (по убыванию приоритета):
 - «Приоритет позиции N» — герой из пользовательских приоритетов;
 - «Контр-пик» — есть пики соперника и счёт вырос против базовой линии;
-- «Мета · WR x%» — герой в мета-топе с известным винрейтом;
+- «Мета» — герой в мета-срезе (винрейт показан отдельно на карточке);
 - «Подбор по позициям» — каталог/роли.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from vetmo.domain.meta_row import MetaRow
 from vetmo.domain.models import DraftSession, Hero, Team
 from vetmo.domain.rules import TOTAL_PICKS
 from vetmo.services.draft_service import DraftService
@@ -75,11 +76,13 @@ class OverlayViewModel:
         settings_service: SettingsService,
         news_service: NewsService,
         hero_lookup: Callable[[int], Hero | None] | None = None,
+        meta_loader: Callable[..., list[MetaRow]] | None = None,
     ) -> None:
         self._draft = draft_service
         self._settings = settings_service
         self._news = news_service
         self._hero_lookup = hero_lookup
+        self._meta_loader = meta_loader
 
     # --- одиночная позиция (публичный контракт refresh) ---
     def refresh(
@@ -160,7 +163,14 @@ class OverlayViewModel:
         return entries
 
     def _meta_win_rates(self) -> dict[int, float]:
-        """hero_id -> win_rate из мета-топа (для подписи WR на карточке)."""
+        """hero_id -> винрейт среза «все ранги» для подписи WR на карточке.
+
+        Раньше брали только топ-15 по винрейту, из-за чего часть карточек
+        оставалась без WR. Теперь — весь мета-срез (он уже в кэше сервиса).
+        """
+        rows = self._meta_rows()
+        if rows:
+            return {row.hero_id: float(row.win_rate) for row in rows}
         try:
             summary = self._news.get_meta_summary(limit=15)
         except Exception:  # noqa: BLE001 — мета не обязательна для оверлея
@@ -168,6 +178,15 @@ class OverlayViewModel:
         return {
             hero.id: float(win_rate) for hero, win_rate, _pick in summary.top
         }
+
+    def _meta_rows(self) -> list[MetaRow]:
+        """Строки мета-среза из загрузчика (или пусто, если он не задан)."""
+        if self._meta_loader is None:
+            return []
+        try:
+            return list(self._meta_loader(limit=200))
+        except Exception:  # noqa: BLE001 — мета не обязательна для оверлея
+            return []
 
     def _picked_hero(
         self, state: DraftSession, team: str, position: int,
@@ -240,8 +259,8 @@ def _classify_reason(
             return "Контр-пик"
     wr = meta_wr.get(hero.id)
     if wr is not None:
-        return f"Мета · WR {wr:.1f}%"
+        return "Мета"
     return "Подбор по позициям"
 
 
-_COUNTER_DELTA = 0.5
+_COUNTER_DELTA = 1.0

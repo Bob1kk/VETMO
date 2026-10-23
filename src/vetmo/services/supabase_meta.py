@@ -56,6 +56,12 @@ _HERO_COLUMNS = (
 # на ранг) и агрегируется по match_count.
 _ALL_RANKS = (1, 2, 3, 4, 5, 6, 7, 8)
 
+# Позиции героя почти не зависят от ранга, поэтому для rank_tier=0 (где
+# per-position строк нет) берём один быстрый срез Immortal. Пять запросов
+# «все ранги + позиция» иногда упираются в троттлинг Supabase (20+ с), а
+# один ранг — доли секунды.
+_POSITION_REFERENCE_RANK = 8
+
 
 def _weighted_avg(rows: list[dict[str, Any]], field: str) -> float | None:
     """Взвешенное по match_count среднее поля (None, если данных нет)."""
@@ -266,6 +272,9 @@ class SupabaseMetaService:
         ] = {}
         self._last_period_end: str | None = None
         self._hero_rows_cache: dict[int, dict[str, Any]] | None = None
+        self._positions_cache: dict[
+            tuple[int, int, str], dict[int, dict[int, PositionStat]],
+        ] = {}
 
     @property
     def period_end(self) -> str | None:
@@ -333,6 +342,7 @@ class SupabaseMetaService:
         self._matchup_cache.clear()
         self._matchup_highlight_cache.clear()
         self._hero_rows_cache = None
+        self._positions_cache.clear()
 
     # ------------------------------------------------------------- мета ----
     def get_meta_rows(
@@ -446,7 +456,82 @@ class SupabaseMetaService:
                 order=("win_rate", True),
                 limit=max(1, int(limit)),
             )
-        return _enrich_with_heroes(rows, self._hero_rows(), patch.version)
+        enriched = _enrich_with_heroes(rows, self._hero_rows(), patch.version)
+        if rank == 0:
+            # В rank_tier=0 нет per-position строк — позиции берём из
+            # быстрого среза Immortal, иначе фильтр рекомендаций пуст.
+            self._attach_positions_index(enriched, patch.id)
+        return enriched
+
+    def _positions_index(
+        self, patch_id: int,
+    ) -> dict[int, dict[int, PositionStat]]:
+        """hero_id -> position -> PositionStat из одного быстрого среза.
+
+        Нужен для rank_tier=0: там per-position строк нет, и без индекса
+        фильтр рекомендаций пропускал carry-героев на позицию 5.
+        """
+        key = (int(patch_id), int(self._settings.meta_window_days), "ALL_PICK_RANKED")
+        cached = self._positions_cache.get(key)
+        if cached is not None:
+            return cached
+        if not self._gateway.is_configured:
+            return {}
+        try:
+            rows = self._gateway.select(
+                "vetmo_meta",
+                columns=_POSITION_COLUMNS,
+                filters={
+                    "patch_id": key[0],
+                    "rank_tier": _POSITION_REFERENCE_RANK,
+                    "window_days": key[1],
+                    "game_mode": key[2],
+                    "is_popular": True,
+                    "position": ("in", [1, 2, 3, 4, 5]),
+                },
+                limit=2000,
+            )
+        except Exception as exc:  # noqa: BLE001 - без индекса фильтр слабее
+            logger.warning("Позиции героев не получены: %s", type(exc).__name__)
+            return {}
+        index: dict[int, dict[int, PositionStat]] = {}
+        for row in rows:
+            hero_id = _as_int(row.get("hero_id"))
+            pos = _as_int(row.get("position"))
+            if hero_id is None or pos is None or not 1 <= pos <= 5:
+                continue
+            index.setdefault(hero_id, {})[pos] = PositionStat(
+                position=pos,
+                pick_share=_as_float(row.get("pick_share")),
+                win_rate=_as_float(row.get("win_rate")),
+                match_count=_as_int(row.get("match_count")) or 0,
+            )
+        self._positions_cache[key] = index
+        return index
+
+    def _attach_positions_index(
+        self, rows: list[dict[str, Any]], patch_id: int,
+    ) -> None:
+        """Добавляет позиции героев туда, где их нет (срез rank_tier=0)."""
+        index = self._positions_index(patch_id)
+        if not index:
+            return
+        for row in rows:
+            hero_id = _as_int(row.get("hero_id"))
+            details = index.get(hero_id) if hero_id is not None else None
+            if not details:
+                continue
+            if not row.get("positions"):
+                row["positions"] = sorted(details)
+            if not row.get("position_details"):
+                row["position_details"] = {
+                    pos: {
+                        "pick_share": stat.pick_share,
+                        "win_rate": stat.win_rate,
+                        "match_count": stat.match_count,
+                    }
+                    for pos, stat in details.items()
+                }
 
     def _hero_rows(self) -> dict[int, dict[str, Any]]:
         """Каталог героев (id -> строка) для склейки с метой; кэш в памяти."""

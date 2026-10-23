@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
             context.settings_service,  # type: ignore[arg-type]
             context.news_service,  # type: ignore[arg-type]
             hero_lookup=context.get_hero_by_id,
+            meta_loader=context.meta.get_meta_rows,
         )
         self._news_widget = NewsWidget()
         self._meta_widget = MetaReportWidget()
