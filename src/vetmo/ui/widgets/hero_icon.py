@@ -6,6 +6,7 @@
 3) цветной круг с инициалами (placeholder_pixmap).
 """
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -24,12 +25,22 @@ _PACKAGE_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _icon_dir() -> Path:
-    """Каталог локального кэша иконок (первый существующий вариант)."""
-    for base in (_PACKAGE_ROOT, Path.cwd()):
-        directory = base / "assets" / "cache" / "icons"
+    """Каталог локального кэша иконок (первый существующий вариант).
+
+    В one-file exe иконки лежат в ``sys._MEIPASS/assets/cache/icons``.
+    """
+    candidates: list[Path] = []
+    meip = getattr(sys, "_MEIPASS", None)
+    if meip:
+        candidates.append(Path(meip) / "assets" / "cache" / "icons")
+    candidates.extend((
+        _PACKAGE_ROOT / "assets" / "cache" / "icons",
+        Path.cwd() / "assets" / "cache" / "icons",
+    ))
+    for directory in candidates:
         if directory.is_dir():
             return directory
-    return _PACKAGE_ROOT / "assets" / "cache" / "icons"
+    return candidates[0]
 
 
 def local_hero_icon(hero_id: int | None) -> QPixmap | None:

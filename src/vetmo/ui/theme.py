@@ -81,12 +81,11 @@ QFrame#appHeader {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 $panel, stop:0.55 $panel_2, stop:1 $panel);
     border: 1px solid $border;
-    border-radius: 14px;
+    border-radius: 16px;
 }
 QLabel#brandMark {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 $accent_hover, stop:1 $accent_pressed);
-    border: 1px solid $accent;
+    background: transparent;
+    border: none;
     border-radius: 11px;
     color: $on_accent;
     font-size: 18px;
@@ -107,7 +106,7 @@ QLabel#brandSubtitle {
 QLabel#headerPill {
     background: $panel_3;
     border: 1px solid $border;
-    border-radius: 9px;
+    border-radius: 10px;
     color: $muted;
     font-size: 10px;
     font-weight: 700;
@@ -150,7 +149,7 @@ QLabel#metaSubtitle { color: $muted; font-size: 11px; background: transparent; }
 QLabel#patchPill {
     background: $accent_soft;
     border: 1px solid $accent_pressed;
-    border-radius: 9px;
+    border-radius: 999px;
     color: $accent_hover;
     font-size: 10px;
     font-weight: 800;
@@ -160,7 +159,7 @@ QLabel#patchPill {
 QFrame#statCard {
     background: $panel_2;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 14px;
 }
 QLabel#statValue {
     color: $text;
@@ -257,31 +256,23 @@ QLabel#newsPlaceholder {
     padding: 8px 6px;
     background: transparent;
 }
-QLabel#badgeOnline {
-    background: $ok; color: #FFFFFF; border-radius: 8px;
-    padding: 2px 10px; font-size: 11px; font-weight: 600;
-}
-QLabel#badgeOffline {
-    background: $danger; color: #FFFFFF; border-radius: 8px;
-    padding: 2px 10px; font-size: 11px; font-weight: 600;
-}
 
 /* ---------- панели и карточки ---------- */
 QFrame#panel, QFrame#metaPanel {
     background: $panel;
     border: 1px solid $border;
-    border-radius: 12px;
+    border-radius: 16px;
 }
 QFrame#metaToolbar {
     background: $panel_2;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 14px;
 }
 QFrame#newsList, QFrame#newsScroll { background: transparent; border: none; }
 QFrame#newsRow {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: 10px;
 }
 QFrame#newsRow:hover {
     background: $panel_2;
@@ -679,36 +670,73 @@ QLabel#overlayTeamTitle {
 }
 QLabel#overlayTeamTitle[team="radiant"] { color: $ok; }
 QLabel#overlayTeamTitle[team="dire"] { color: $danger; }
-QLabel#overlayPosBadge {
+QLabel#overlayTeamCount {
+    color: $muted;
+    font-size: 9px;
+    font-weight: 700;
+    background: transparent;
+}
+QFrame#overlaySlot {
+    background: $panel_3;
+    border: 1px dashed $border;
+    border-radius: 8px;
+}
+QFrame#overlaySlot:hover {
+    background: $accent_soft;
+    border: 1px dashed $accent;
+}
+QFrame#overlaySlot[filled="true"] {
+    background: $panel_2;
+    border: 1px solid $border;
+}
+QFrame#overlaySlot[filled="true"]:hover { border: 1px solid $accent; }
+QLabel#overlaySlotBadge {
     background: $panel_3;
     border: 1px solid $border;
-    border-radius: 9px;
+    border-radius: 8px;
     color: $muted;
     font-size: 9px;
     font-weight: 800;
 }
-QFrame#overlayCard {
-    background: $panel_2;
-    border: 1px solid $border;
-    border-radius: 8px;
-}
-QFrame#overlayCard:hover { border: 1px solid $accent; }
-QFrame#overlayCard QLabel#cardName {
+QLabel#overlaySlotName {
     color: $text;
     font-size: 11px;
-    font-weight: 700;
-}
-QFrame#overlayCard QLabel#cardReason {
-    color: $accent_hover;
-    font-size: 9px;
+    font-weight: 600;
     background: transparent;
 }
-QFrame#overlayCard QLabel#cardWr {
-    color: $ok;
-    font-size: 10px;
-    font-weight: 700;
+QPushButton#overlaySlotClear {
+    background: transparent;
+    border: none;
+    border-radius: 9px;
+    color: $muted;
+    font-size: 13px;
+    font-weight: 800;
+    padding: 0;
 }
-QLabel#overlayPosLabel { color: $muted; font-size: 10px; font-weight: 600; }
+QPushButton#overlaySlotClear:hover {
+    background: $danger;
+    color: $on_accent;
+}
+QLabel#overlaySuggestTitle {
+    color: $muted;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    background: transparent;
+    padding-top: 2px;
+}
+QLabel#overlaySuggestPos {
+    color: $accent_hover;
+    font-size: 9px;
+    font-weight: 700;
+    background: transparent;
+}
+QLabel#overlaySuggestHeroes {
+    color: $text;
+    font-size: 10px;
+    font-weight: 600;
+    background: transparent;
+}
 QLabel#overlayHint { color: $muted; font-size: 9px; background: transparent; }
 """.lstrip()
 )

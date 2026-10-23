@@ -1,12 +1,13 @@
-"""Центральная панель лаунчера: мета героев OpenDota.
+"""Центральная панель лаунчера: мета героев (через Supabase).
 
-Структура: заголовок с патчем, сводные карточки, поиск/сортировка, фильтры
-по позиции и рангу, таблица всех героев. Данные приходят из
-``MainViewModel.meta_updated``; иконки — локальный кэш -> CDN -> плейсхолдер.
+Структура: сводные карточки, поиск/сортировка, фильтры по позиции и рангу,
+таблица всех героев. Данные приходят из ``MainViewModel.meta_updated``;
+иконки — локальный кэш -> CDN -> плейсхолдер.
 
-Важно про источники: win/pick — публичные матчи OpenDota, pro-баны — только
-общий срез (у OpenDota нет разбивки банов по рангам). Позиции — эвристика
-по ролям героя, а не турнирная статистика.
+Метрики считает sync-скрипт и складывает в Supabase; в UI приходят уже
+готовые значения. ``positions`` — только популярные позиции героя
+(доля пиков выше порога), ``position_details`` — доля пиков/WR/матчи для
+тултипа. Если деталей нет, подсказка не выдумывает источник.
 """
 
 from collections.abc import Callable
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vetmo.domain.matchup import MatchupReport
 from vetmo.ui.viewmodels.main_viewmodel import (
     MetaReport,
     MetaReportRow,
@@ -37,6 +39,7 @@ from vetmo.ui.viewmodels.main_viewmodel import (
 from vetmo.ui.widgets.hero_icon import resolve_icon, scale_icon
 from vetmo.ui.widgets.icon_fetcher import icon_fetcher
 from vetmo.ui.widgets.matchup import format_matchup_tooltip
+from vetmo.ui.widgets.matchup_dialog import MatchupDialog
 from vetmo.ui.workers import start_worker
 
 _GREEN = "#43C59E"
@@ -47,9 +50,9 @@ _GREY = "#8E99AD"
 _ICON_SIZE = 36
 _ROW_HEIGHT = 52
 
-_COL_RANK, _COL_HERO, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK, _COL_DPICK, _COL_BAN = range(8)
+_COL_HERO, _COL_WR, _COL_DWR, _COL_PICK, _COL_BAN = range(5)
 _HEADERS = (
-    "#", "ГЕРОЙ", "ПОЗИЦИИ", "ВИНРЕЙТ", "Δ WR", "ПИКИ", "Δ ПИК", "PRO-БАНЫ",
+    "ГЕРОЙ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "БАНЫ",
 )
 
 _POSITION_OPTIONS: tuple[tuple[str, int], ...] = (
@@ -62,7 +65,7 @@ _RANK_OPTIONS: tuple[tuple[str, int], ...] = (
     ("Immortal", 8),
 )
 _SORT_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("Винрейт ↓", "win"), ("Пики ↓", "pick"), ("Pro-баны ↓", "ban"),
+    ("Винрейт ↓", "win"), ("Пики ↓", "pick"), ("Баны ↓", "ban"),
     ("Имя A–Z", "name"),
 )
 _ATTR_LABELS = {"str": "STR", "agi": "AGI", "int": "INT", "all": "UNIV"}
@@ -101,6 +104,25 @@ def _wr_color(value: float | None) -> str:
     if value >= 50.0:
         return _YELLOW
     return _RED
+
+
+_BAN_SCOPE_LABELS = {
+    "HERALD_GUARDIAN": "Herald–Guardian",
+    "CRUSADER_ARCHON": "Crusader–Archon",
+    "LEGEND_ANCIENT": "Legend–Ancient",
+    "DIVINE_IMMORTAL": "Divine–Immortal",
+    "ALL": "все ранги",
+}
+
+
+def _ban_tooltip(ban_scope: object) -> str:
+    """Тултип банов: доля матчей, где герой забанен, + группа рангов."""
+    base = "Доля матчей, где герой забанен"
+    if not ban_scope:
+        return base
+    scope = str(ban_scope)
+    label = _BAN_SCOPE_LABELS.get(scope.upper(), scope)
+    return f"{base} · срез {label}"
 
 
 class Bar(QWidget):
@@ -164,38 +186,10 @@ class DeltaCell(QLabel):
         self.setText(_delta_text(value))
 
 
-class PositionCell(QWidget):
-    """Компактные бейджи позиций 1..5 (максимум 3 + «+N»)."""
-
-    def __init__(self, positions: list[int], parent: QWidget) -> None:
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(6, 0, 4, 0)
-        row.setSpacing(3)
-        if not positions:
-            empty = QLabel("—", self)
-            empty.setObjectName("nodata")
-            row.addWidget(empty)
-        else:
-            for position in positions[:3]:
-                badge = QLabel(str(position), self)
-                badge.setObjectName("posBadge")
-                badge.setFixedSize(21, 21)
-                badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                badge.setToolTip(f"Позиция {position} по ролям (эвристика)")
-                row.addWidget(badge)
-            if len(positions) > 3:
-                more = QLabel(f"+{len(positions) - 3}", self)
-                more.setObjectName("mutedSmall")
-                more.setToolTip(
-                    "Все позиции: " + ", ".join(map(str, positions)))
-                row.addWidget(more)
-        row.addStretch(1)
-
-
 class HeroCell(QWidget):
-    """Иконка 36px + имя + атрибут/тип атаки; держит hero_id для тултипа."""
+    """Иконка 36px + имя + атрибут/тип атаки; клик открывает матчапы."""
+
+    clicked = Signal(int)
 
     def __init__(
         self, row: MetaReportRow, parent: QWidget,
@@ -206,6 +200,8 @@ class HeroCell(QWidget):
         self.hero_id = row.hero_id
         self._url: str | None = None
         self._on_hover = on_hover
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Нажмите, чтобы открыть матчапы героя")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 6, 4)
         layout.setSpacing(9)
@@ -260,6 +256,11 @@ class HeroCell(QWidget):
             self._on_hover(self.hero_id)
         super().enterEvent(event)
 
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 — Qt API
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.hero_id)
+        super().mouseReleaseEvent(event)
+
 
 class MetaReportWidget(QFrame):
     """Мета-отчёт: сводка, поиск/сортировка, фильтры и таблица героев."""
@@ -270,20 +271,16 @@ class MetaReportWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("metaPanel")
         self._matchup_loader = None
+        self._matchup_details_loader: (
+            Callable[[int, int, int | None], MatchupReport] | None
+        ) = None
+        self._matchup_dialog: MatchupDialog | None = None
         self._all_rows: list[MetaReportRow] = []
         self._view_rows: list[MetaReportRow] = []
         self._row_cells: dict[int, list[QWidget]] = {}
         self._matchup_done: set[int] = set()
         self._matchup_pending: set[int] = set()
         self._rank_supported = True
-
-        self._patch_label = QLabel("ПАТЧ —", self)
-        self._patch_label.setObjectName("patchPill")
-        self._source_label = QLabel("OPENDOTA · PUBLIC MATCHES", self)
-        self._source_label.setObjectName("mutedSmall")
-        self._source_label.setToolTip(
-            "Винрейт и пики — публичные матчи OpenDota. Pro-баны — отдельный "
-            "pro-срез, доступный только в общем срезе и не разбитый по рангам.")
 
         self._status = QLabel(self)
         self._status.setObjectName("stateInfo")
@@ -303,13 +300,12 @@ class MetaReportWidget(QFrame):
         self._count_label = QLabel(self)
         self._count_label.setObjectName("countLabel")
 
-        self._stat_heroes = self._build_stat("ГЕРОЕВ В СРЕЗЕ")
         self._stat_wr = self._build_stat("СРЕДНИЙ WR")
         self._stat_leader = self._build_stat("ЛИДЕР ПО WR")
         stats = QHBoxLayout()
         stats.setContentsMargins(0, 0, 0, 0)
         stats.setSpacing(8)
-        for card in (self._stat_heroes, self._stat_wr, self._stat_leader):
+        for card in (self._stat_wr, self._stat_leader):
             stats.addWidget(card, 1)
 
         toolbar = QFrame(self)
@@ -323,15 +319,12 @@ class MetaReportWidget(QFrame):
         title_box.setSpacing(0)
         title = QLabel("Мета героев", self)
         title.setObjectName("metaTitle")
-        subtitle = QLabel(
-            "Винрейт и пики — public, pro-баны — отдельный pro-срез", self)
-        subtitle.setObjectName("metaSubtitle")
+        self._subtitle = QLabel("Ranked All Pick · последние 7 дней", self)
+        self._subtitle.setObjectName("metaSubtitle")
         title_box.addWidget(title)
-        title_box.addWidget(subtitle)
+        title_box.addWidget(self._subtitle)
         title_row.addLayout(title_box)
         title_row.addStretch(1)
-        title_row.addWidget(self._source_label)
-        title_row.addWidget(self._patch_label)
         toolbar_layout.addLayout(title_row)
 
         controls = QHBoxLayout()
@@ -354,13 +347,6 @@ class MetaReportWidget(QFrame):
         footer.setContentsMargins(2, 0, 2, 0)
         footer.addWidget(self._count_label)
         footer.addStretch(1)
-        source_note = QLabel(
-            "Позиции — эвристика · Δ — к прошлой синхронизации · "
-            "pro-баны не по рангам",
-            self,
-        )
-        source_note.setObjectName("mutedSmall")
-        footer.addWidget(source_note)
         layout.addLayout(footer)
 
         self._search.textChanged.connect(self._apply_view)
@@ -388,17 +374,14 @@ class MetaReportWidget(QFrame):
         header = table.horizontalHeader()
         header.setSectionResizeMode(_COL_HERO, QHeaderView.ResizeMode.Stretch)
         for column in (
-            _COL_RANK, _COL_POS, _COL_WR, _COL_DWR, _COL_PICK, _COL_DPICK,
+            _COL_WR, _COL_DWR, _COL_PICK,
             _COL_BAN,
         ):
             header.setSectionResizeMode(
                 column, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(_COL_RANK, 36)
-        table.setColumnWidth(_COL_POS, 88)
         table.setColumnWidth(_COL_WR, 142)
-        table.setColumnWidth(_COL_DWR, 70)
-        table.setColumnWidth(_COL_PICK, 132)
-        table.setColumnWidth(_COL_DPICK, 70)
+        table.setColumnWidth(_COL_DWR, 112)
+        table.setColumnWidth(_COL_PICK, 120)
         table.setColumnWidth(_COL_BAN, 108)
         table.viewport().setMouseTracking(True)
         table.viewport().installEventFilter(self)
@@ -473,22 +456,22 @@ class MetaReportWidget(QFrame):
 
     def set_loading(self) -> None:
         """Экран загрузки: старые строки не трогаем, показываем статус."""
-        self._set_state("Обновляем мета-данные OpenDota…")
+        self._set_state("Обновляем мета-данные…")
 
     def set_error(self, message: str) -> None:
         """Ошибка загрузки; последние успешные строки остаются на экране."""
         self._set_state(f"Мета недоступна ({message})", error=True)
 
     def set_empty(self) -> None:
-        """Пустое состояние: в БД нет среза."""
+        """Пустое состояние: для среза нет строк в источнике."""
         self._all_rows = []
         self._view_rows = []
         self._table.setRowCount(0)
-        self._patch_label.setText("ПАТЧ —")
         self._count_label.setText("Нет данных")
         self._update_stats([])
         self._set_state(
-            "Нет мета-данных. Нажмите «Синхронизировать данные» в настройках.")
+            "Для выбранного среза данных пока нет. "
+            "Обновите данные в настройках.")
 
     def on_meta_report(self, report: MetaReport) -> None:
         """Слот для MainViewModel.meta_updated."""
@@ -501,9 +484,10 @@ class MetaReportWidget(QFrame):
     def set_meta(self, report: MetaReport) -> None:
         """Экран данных: все строки среза, затем клиентская фильтрация."""
         self._rank_supported = report.rank_supported
-        version = report.patch_version
-        self._patch_label.setText(
-            f"ПАТЧ {version.upper()}" if version else "ПАТЧ —")
+        if report.period:
+            self._subtitle.setText(f"Ranked All Pick · {report.period}")
+        else:
+            self._subtitle.setText("Ranked All Pick · последние 7 дней")
         normalized = (
             _normalize_meta_row(row) for row in report.rows
         )
@@ -514,12 +498,6 @@ class MetaReportWidget(QFrame):
                 continue
             seen.add(row.hero_id)
             self._all_rows.append(row)
-        self._source_label.setToolTip(
-            "Винрейт и пики — публичные матчи OpenDota (метка патча "
-            f"{version or 'не определена'}). Pro-баны — отдельный pro-срез "
-            "OpenDota; он доступен только в общем срезе и может не совпадать "
-            "с патчем public-матчей."
-        )
         if not report.rank_supported:
             self._set_state(
                 "Ранговые тиры пока не поддерживаются мета-сервисом — "
@@ -582,62 +560,50 @@ class MetaReportWidget(QFrame):
             scrollbar.setSingleStep(24)
 
     def _fill_row(self, index: int, row: MetaReportRow) -> None:
-        rank_label = QLabel(f"{index + 1:02d}", self._table)
-        rank_label.setObjectName("mutedSmall")
-        rank_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rank_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._table.setCellWidget(index, _COL_RANK, rank_label)
-        cells: list[QWidget] = [rank_label]
+        cells: list[QWidget] = []
 
         hero_cell = HeroCell(
             row, self._table,
             on_hover=self._maybe_request_matchup,
         )
+        hero_cell.clicked.connect(self._open_matchups)
         self._table.setCellWidget(index, _COL_HERO, hero_cell)
         cells.append(hero_cell)
 
-        position_cell = PositionCell(row.positions, self._table)
-        self._table.setCellWidget(index, _COL_POS, position_cell)
-        cells.append(position_cell)
-
         wr_cell = RateCell(
             row.win_rate, _wr_color(row.win_rate), self._table,
-            tooltip="Винрейт публичных матчей OpenDota",
+            tooltip="Винрейт героя в выбранном срезе",
         )
         self._table.setCellWidget(index, _COL_WR, wr_cell)
         cells.append(wr_cell)
 
         delta_wr = DeltaCell(row.delta_win, self._table)
+        delta_wr.setToolTip("Изменение винрейта по сравнению с предыдущим окном")
         self._table.setCellWidget(index, _COL_DWR, delta_wr)
         cells.append(delta_wr)
 
         pick_cell = RateCell(
             row.pick_rate, _YELLOW, self._table,
-            tooltip="Доля матчей, в которых герой выбран (10 пиков на игру)",
+            tooltip="Доля матчей, в которых герой выбран",
         )
         self._table.setCellWidget(index, _COL_PICK, pick_cell)
         cells.append(pick_cell)
 
-        delta_pick = DeltaCell(row.delta_pick, self._table)
-        self._table.setCellWidget(index, _COL_DPICK, delta_pick)
-        cells.append(delta_pick)
-
         rank_filter = self.filters()[1]
-        ban_value = row.ban_rate if rank_filter is None else None
+        ban_value = row.ban_rate
+        ban_scope = getattr(row, "ban_scope", None)
         if ban_value is None:
             ban_empty = QLabel("—", self._table)
             ban_empty.setObjectName("nodata")
             ban_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ban_empty.setAttribute(
                 Qt.WidgetAttribute.WA_TranslucentBackground)
-            ban_empty.setToolTip(
-                "Pro-баны недоступны для рангового среза: OpenDota не "
-                "разбивает их по рангам.")
+            ban_empty.setToolTip("Баны для этого среза пока недоступны")
             ban_cell: QWidget = ban_empty
         else:
             ban_cell = RateCell(
                 ban_value, _GREY, self._table,
-                tooltip="Pro-баны OpenDota: ban / (pick + ban) в pro-сцене",
+                tooltip=_ban_tooltip(ban_scope),
             )
         self._table.setCellWidget(index, _COL_BAN, ban_cell)
         cells.append(ban_cell)
@@ -651,10 +617,8 @@ class MetaReportWidget(QFrame):
                 cell.setToolTip(rank_supported_note.lstrip(" ·"))
 
     def _update_stats(self, rows: list[MetaReportRow]) -> None:
-        heroes = self._stat_heroes._value_label  # type: ignore[attr-defined]
         average = self._stat_wr._value_label  # type: ignore[attr-defined]
         leader = self._stat_leader._value_label  # type: ignore[attr-defined]
-        heroes.setText(str(len(rows)))
         rates = [
             row.win_rate for row in rows if row.win_rate is not None
         ]
@@ -675,6 +639,40 @@ class MetaReportWidget(QFrame):
     def set_matchup_loader(self, loader) -> None:
         """loader(hero_id) -> (strong, weak) | None — вызывается в worker."""
         self._matchup_loader = loader
+
+    def set_matchup_details_loader(
+        self,
+        loader: Callable[[int, int, int | None], MatchupReport] | None,
+    ) -> None:
+        """loader(hero_id, rank_tier, patch_id) -> MatchupReport."""
+        self._matchup_details_loader = loader
+
+    def _open_matchups(self, hero_id: int) -> None:
+        """Клик по герою: открыть диалог контрпиков/связок."""
+        if self._matchup_details_loader is None:
+            return
+        row = next(
+            (item for item in self._view_rows if item.hero_id == hero_id),
+            None,
+        )
+        if row is None:
+            return
+        if self._matchup_dialog is not None:
+            self._matchup_dialog.close()
+            self._matchup_dialog.deleteLater()
+        rank_tier = self.filters()[1] or 0
+        dialog = MatchupDialog(
+            hero_id=row.hero_id,
+            hero_name=row.name,
+            icon_url=row.icon_url,
+            internal_name=row.internal_name,
+            rank_tier=rank_tier,
+            loader=self._matchup_details_loader,
+            parent=self.window(),
+        )
+        self._matchup_dialog = dialog
+        dialog.show()
+        dialog.raise_()
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         """Hover по таблице -> ленивый тултип контрпиков."""

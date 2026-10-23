@@ -1,9 +1,9 @@
-"""Левая панель лаунчера: новости патчей + бейдж «Онлайн/Офлайн» (R2).
+"""Левая панель лаунчера: новости патчей (R2).
 
 Элемент = заголовок (кликабельный: QDesktopServices.openUrl) + сниппет
-(до 2 строк) + дата; hover-подсветка строки. Если офлайн и список пуст —
-компактный плейсхолдер «Новости недоступны (офлайн)», не пустая панель.
-Обновление по таймеру зоны ответственности MainWindow (задача C R2).
+(до 2 строк) + дата; hover-подсветка строки. Бейджа «Онлайн/Офлайн» больше
+нет: новости обновляются раз в час по таймеру MainWindow, при ошибке
+показывается аккуратный текст, а не красная плашка.
 """
 
 from html import escape
@@ -71,16 +71,12 @@ class NewsRow(QFrame):
 
 
 class NewsWidget(QFrame):
-    """Новости патчей: заголовок с иконкой, бейдж сети, список новостей."""
+    """Новости патчей: заголовок и список карточек (без бейджа сети)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("panel")
         self.setMinimumWidth(260)
-
-        self._badge = QLabel(self)
-        self._badge.setObjectName("badgeOffline")
-        self._badge.hide()
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 2)
@@ -88,7 +84,6 @@ class NewsWidget(QFrame):
         title.setObjectName("sectionTitle")
         header_row.addWidget(title)
         header_row.addStretch(1)
-        header_row.addWidget(self._badge)
 
         self._placeholder = QLabel(self)
         self._placeholder.setObjectName("newsPlaceholder")
@@ -118,38 +113,34 @@ class NewsWidget(QFrame):
         layout.addWidget(scroll, 1)
         self.set_loading()
 
-    # --- состояния экрана (план §9: загрузка/пусто/ошибка/нет сети) ---
+    # --- состояния экрана (план §9: загрузка/пусто/ошибка) ---
     def set_loading(self) -> None:
         """Экран загрузки."""
         self._clear_rows()
-        self._placeholder.setText("⏳ Загрузка новостей…")
+        self._placeholder.setToolTip("")
+        self._placeholder.setText("Загрузка новостей…")
         self._placeholder.show()
-        self._badge.hide()
 
-    def set_error(self, message: str) -> None:
-        """Экран ошибки (worker сломался, сервис недоступен)."""
+    def set_error(self, message: str = "") -> None:
+        """Экран ошибки: аккуратный текст, без плашки и без стека."""
         self._clear_rows()
-        self._placeholder.setText(f"⚠ Ошибка загрузки: {message}")
+        self._placeholder.setText(
+            "Не удалось обновить новости. Попробуем позже.")
+        self._placeholder.setToolTip(str(message or ""))
         self._placeholder.show()
-        self._badge.setText("Офлайн")
-        self._badge.setObjectName("badgeOffline")
-        self._badge.show()
 
-    def set_news(self, items: list[NewsItem], is_online: bool) -> None:
-        """Экран данных: новости + бейдж сети; офлайн -> плейсхолдер."""
+    def set_news(
+        self, items: list[NewsItem], is_online: bool | None = None,
+    ) -> None:
+        """Экран данных.
+
+        ``is_online`` оставлен для совместимости со старым сигналом
+        viewmodel и игнорируется: бейджа сети в панели нет.
+        """
         self._clear_rows()
-        online_badge = "Онлайн" if is_online else "Офлайн"
-        self._badge.setText(online_badge)
-        self._badge.setObjectName(
-            "badgeOnline" if is_online else "badgeOffline")
-        self._badge.style().polish(self._badge)  # noqa: SLF001 — repaint hint
-        self._badge.show()
+        self._placeholder.setToolTip("")
         if not items:
-            if not is_online:
-                self._placeholder.setText("📡 Новости недоступны (офлайн)")
-            else:
-                self._placeholder.setText(
-                    "Новостей пока нет.\nЗапустите синхронизацию.")
+            self._placeholder.setText("Новостей пока нет.")
             self._placeholder.show()
             return
         self._placeholder.hide()
@@ -160,7 +151,7 @@ class NewsWidget(QFrame):
         self._rows_layout.addStretch(1)
 
     def on_news_updated(
-        self, items: list[NewsItem], is_online: bool,
+        self, items: list[NewsItem], is_online: bool | None = None,
     ) -> None:
         """Слот для MainViewModel.news_updated."""
         self.set_news(items, is_online)

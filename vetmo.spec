@@ -34,6 +34,13 @@ _EXCLUDES = [
     "numpy.f2py",
     "numpy.tests",
     "numpy.distutils",
+    # Admin и sync-код не входят в пользовательскую сборку (T-114):
+    # service_role/STRATZ-токен живут только в VETMO-Admin.exe.
+    "vetmo.admin",
+    "vetmo.infra.sync_settings",
+    "vetmo.services.stratz_client",
+    "vetmo.services.stratz_sync",
+    "vetmo.services.stratz_aggregate",
 ]
 
 
@@ -48,6 +55,13 @@ a = Analysis(
             os.path.join(ROOT, "src", "vetmo", "data", "migrations"),
             os.path.join("vetmo", "data", "migrations"),
         ),
+        (
+            os.path.join(ROOT, "src", "vetmo", "data", "heroes_seed.json"),
+            os.path.join("vetmo", "data"),
+        ),
+        # Иконки приложения (ICO для exe/окна, BMP — исходник) в бандле.
+        (os.path.join(ROOT, "vetmo_icon.ico"), "."),
+        (os.path.join(ROOT, "vetmo_icon.bmp"), "."),
         # Кэш иконок всех героев (если он собран) — офлайн-иконки в exe.
         *(
             (os.path.join(_ICONS_DIR, name),
@@ -85,5 +99,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=os.path.join(ROOT, "vetmo_icon.ico"),
 )

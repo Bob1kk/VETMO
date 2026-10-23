@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 
 from vetmo.services.draft_service import DraftService
 from vetmo.services.news_service import NewsItem, NewsService
-from vetmo.services.settings_service import SettingsService
 from vetmo.ui.viewmodels.callbacks import CallbackList
 
 
@@ -32,9 +31,11 @@ class MetaReportRow:
     ban_rate: float | None = None
     delta_ban: float | None = None
     positions: list[int] = field(default_factory=list)
+    position_details: dict[int, object] = field(default_factory=dict)
     patch_version: str | None = None
     primary_attr: str = ""
     attack_type: str = ""
+    sample_reliable: bool = False
 
 
 @dataclass
@@ -44,6 +45,7 @@ class MetaReport:
     rows: list[MetaReportRow] = field(default_factory=list)
     patch_version: str | None = None
     rank_supported: bool = True
+    period: str | None = None
 
 
 @dataclass
@@ -151,6 +153,13 @@ def _normalize_meta_row(row: object) -> MetaReportRow | None:
         )
     if not positions:
         positions = _positions_from_roles(hero.get("roles"))
+    raw_details = _field(row, "position_stats")
+    position_details: dict[int, object] = {}
+    if isinstance(raw_details, dict):
+        for key, value in raw_details.items():
+            position = _as_int(key)
+            if position is not None and 1 <= position <= 5:
+                position_details[position] = value
     return MetaReportRow(
         hero_id=hero_id,
         name=name or f"Герой {hero_id}",
@@ -163,26 +172,26 @@ def _normalize_meta_row(row: object) -> MetaReportRow | None:
         ban_rate=_as_float(_field(row, "ban_rate")),
         delta_ban=_as_float(_field(row, "delta_ban")),
         positions=positions,
+        position_details=position_details,
         patch_version=str(_field(row, "patch_version") or "") or None,
         primary_attr=str(
             _field(row, "primary_attr") or hero.get("primary_attr") or ""),
         attack_type=str(
             _field(row, "attack_type") or hero.get("attack_type") or ""),
+        sample_reliable=bool(_field(row, "sample_reliable") or False),
     )
 
 
 class MainViewModel:
-    """Состояние лаунчера: новости, мета, приоритеты позиций."""
+    """Состояние лаунчера: новости, мета и драфт."""
 
     def __init__(
         self,
         news_service: NewsService,
-        settings_service: SettingsService,
         draft_service: DraftService,
         meta_report_loader: Callable[..., tuple[list[object], bool]] | None = None,
     ) -> None:
         self._news = news_service
-        self._settings = settings_service
         self._draft = draft_service
         # meta_report_loader: callable(limit, rank_tier, position) ->
         #     (rows, rank_supported) — AppContext.meta_report.
@@ -192,7 +201,6 @@ class MainViewModel:
 
         self.news_updated = CallbackList()      # (list[NewsItem], is_online)
         self.meta_updated = CallbackList()      # (MetaReport,)
-        self.priorities_updated = CallbackList()  # (dict[int, list[int]],)
         self.draft_updated = CallbackList()     # (DraftSession,)
 
     # --- запросы данных (worker-поток) ---
@@ -204,11 +212,14 @@ class MainViewModel:
         self, limit: int = 40, rank_tier: int | None = None,
         position: int | None = None,
     ) -> MetaReport:
-        """Мета-отчёт с фильтрами ранга/позиции (контракт MetaRepository)."""
+        """Мета-отчёт с фильтрами ранга/позиции (текущий патч)."""
         if self._meta_report_loader is None:
             raise RuntimeError("Синхронизация меты недоступна")
-        raw_rows, rank_supported = self._meta_report_loader(
-            limit=limit, rank_tier=rank_tier, position=position)
+        result = self._meta_report_loader(
+            limit=limit, rank_tier=rank_tier, position=position,
+        )
+        raw_rows, rank_supported = result[0], result[1]
+        period = result[2] if len(result) > 2 else None
         rows = [
             normalized
             for normalized in (_normalize_meta_row(row) for row in raw_rows)
@@ -220,6 +231,7 @@ class MainViewModel:
             rows=rows,
             patch_version=self._patch_version(rows),
             rank_supported=rank_supported,
+            period=period,
         )
 
     def _patch_version(self, rows: list[MetaReportRow]) -> str | None:
@@ -248,12 +260,3 @@ class MainViewModel:
     def publish_draft_state(self, state) -> None:
         """Рассылает состояние драфта подписчикам."""
         self.draft_updated.emit(state)
-
-    # --- настройки приоритетов (дефолт для диалога) ---
-    def get_priorities(self) -> dict[int, list[int]]:
-        """Текущие приоритеты позиций 1..5 -> hero_id."""
-        return self._settings.get_position_priorities()
-
-    def notify_priorities_saved(self, priorities: dict[int, list[int]]) -> None:
-        """Сообщает о сохранённых приоритетах (запись БД делает UI-воркер)."""
-        self.priorities_updated.emit(priorities)

@@ -1,20 +1,21 @@
 """OverlayViewModel: рекомендации позиций 1..5 + причины. Без Qt (NFR-005).
 
-Причины рекомендации (по убыванию приоритета):
-- «Приоритет позиции N» — герой из пользовательских приоритетов;
+Причины рекомендации (по убыванию значимости):
 - «Контр-пик» — есть пики соперника и счёт вырос против базовой линии;
-- «Мета · WR x%» — герой в мета-топе с известным винрейтом;
+- «Связка» — герой хорошо играет с уже пикнутыми союзниками;
+- «Мета» — герой в мета-срезе (винрейт показан отдельно на карточке);
 - «Подбор по позициям» — каталог/роли.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from vetmo.domain.meta_row import MetaRow
 from vetmo.domain.models import DraftSession, Hero, Team
+from vetmo.domain.recommendation import Recommendation
 from vetmo.domain.rules import TOTAL_PICKS
 from vetmo.services.draft_service import DraftService
 from vetmo.services.news_service import NewsService
-from vetmo.services.settings_service import SettingsService
 
 _TEAM_RADIANT: Team = "radiant"
 _TEAM_DIRE: Team = "dire"
@@ -28,12 +29,19 @@ class OverlayEntry:
     score: float
     reason: str
     win_rate: float | None = None
+    position: int | None = None
 
     def wr_text(self) -> str:
         """Текст винрейта (или пустая строка)."""
         if self.win_rate is None:
             return ""
         return f"WR {self.win_rate:.1f}%"
+
+    def reason_text(self) -> str:
+        """Причина с позицией: «Поз. 2 · Контр-пик»."""
+        if self.position is None:
+            return self.reason
+        return f"Поз. {self.position} · {self.reason}"
 
 
 @dataclass
@@ -49,6 +57,10 @@ class OverlaySnapshot:
     picked: dict[str, dict[int, Hero | None]] = field(
         default_factory=lambda: {_TEAM_RADIANT: {}, _TEAM_DIRE: {}},
     )
+    # Подсказки «снизу»: лучшие герои команды по совокупности всех позиций.
+    suggestions: dict[str, list[OverlayEntry]] = field(
+        default_factory=lambda: {_TEAM_RADIANT: [], _TEAM_DIRE: []},
+    )
 
     def step_text(self) -> str:
         """«Шаг драфта: X/10 — сейчас пикает Radiant»."""
@@ -61,14 +73,14 @@ class OverlayViewModel:
     def __init__(
         self,
         draft_service: DraftService,
-        settings_service: SettingsService,
         news_service: NewsService,
         hero_lookup: Callable[[int], Hero | None] | None = None,
+        meta_loader: Callable[..., list[MetaRow]] | None = None,
     ) -> None:
         self._draft = draft_service
-        self._settings = settings_service
         self._news = news_service
         self._hero_lookup = hero_lookup
+        self._meta_loader = meta_loader
 
     # --- одиночная позиция (публичный контракт refresh) ---
     def refresh(
@@ -76,11 +88,10 @@ class OverlayViewModel:
     ) -> list[tuple[Hero, float, str]]:
         """[(Hero, score, причина)] для позиции — без контекста драфта."""
         recs = self._draft.get_recommendations(position, session_id, limit)
-        priorities = self._settings.get_position_priorities()
         meta_wr = self._meta_win_rates()
         return [
             (hero, score, _classify_reason(
-                position, hero, score, {}, set(), priorities, meta_wr,
+                position, hero, score, {}, set(), meta_wr,
             ))
             for hero, score in recs
         ]
@@ -88,8 +99,9 @@ class OverlayViewModel:
     # --- полный снимок (worker-поток) ---
     def compute_all(
         self, session_id: int | None = None, limit: int = 3,
+        suggestions_limit: int = 4,
     ) -> OverlaySnapshot:
-        """Снимок обеих колонок: рекомендации, пикнутые, шаг драфта."""
+        """Снимок обеих колонок: пики, рекомендации, шаг драфта."""
         state = self._draft.get_state(session_id)
         meta_wr = self._meta_win_rates()
         snapshot = OverlaySnapshot(
@@ -97,7 +109,6 @@ class OverlayViewModel:
             total=state.total_picks,
             next_team=_next_team(state),
         )
-        priorities = self._settings.get_position_priorities()
         for team in (_TEAM_RADIANT, _TEAM_DIRE):
             opponents = _opponent_hero_ids(state, team)
             taken = [p.position for p in state.picks if p.team == team]
@@ -108,8 +119,11 @@ class OverlayViewModel:
                 if position in taken:
                     continue  # позиция занята — карточку рекомендаций не пикаем
                 snapshot.columns[team][position] = self._entries_for(
-                    position, team, state, opponents, priorities, meta_wr, limit,
+                    position, team, state, opponents, meta_wr, limit,
                 )
+            snapshot.suggestions[team] = _flatten_suggestions(
+                snapshot.columns[team], suggestions_limit,
+            )
         return snapshot
 
     # --- внутренние ---
@@ -119,33 +133,67 @@ class OverlayViewModel:
         team: Team,
         state: DraftSession,
         opponents: set[int],
-        priorities: dict[int, list[int]],
         meta_wr: dict[int, float],
         limit: int,
     ) -> list[OverlayEntry]:
-        """Рекомендации позиции с причинами (приоритет > контр-пик > мета)."""
-        recs = self._draft.get_recommendations(
-            position, state.id, limit, team=team)
+        """Рекомендации позиции с причинами (контр-пик > связка > мета)."""
+        details = self._recommendation_details(state, position, team, limit)
+        if details is not None:
+            return [
+                OverlayEntry(
+                    hero=rec.hero,
+                    score=rec.score,
+                    reason=_reason_from_detail(rec, position),
+                    win_rate=(
+                        rec.meta_win_rate
+                        if rec.meta_win_rate is not None
+                        else meta_wr.get(rec.hero.id)
+                    ),
+                    position=position,
+                )
+                for rec in details
+            ]
+        # Fallback для DraftService без разложения счёта.
+        recs = self._draft.get_recommendations_for(
+            state, position, limit=limit, team=team)
         baseline: dict[int, float] = {}
         if opponents:
-            base = self._draft.get_recommendations(
-                position, None, limit=_LARGE_LIMIT,
+            base = self._draft.get_recommendations_for(
+                None, position, limit=_LARGE_LIMIT,
             )
             baseline = {hero.id: score for hero, score in base}
         entries: list[OverlayEntry] = []
         for hero, score in recs:
             reason = _classify_reason(
-                position, hero, score, baseline, opponents,
-                priorities, meta_wr,
+                position, hero, score, baseline, opponents, meta_wr,
             )
             entries.append(OverlayEntry(
                 hero=hero, score=score, reason=reason,
-                win_rate=meta_wr.get(hero.id),
+                win_rate=meta_wr.get(hero.id), position=position,
             ))
         return entries
 
+    def _recommendation_details(
+        self, state: DraftSession, position: int, team: Team, limit: int,
+    ) -> list[Recommendation] | None:
+        """Разложение счёта из SupabaseDraftService (None — нет метода)."""
+        loader = getattr(self._draft, "get_recommendation_details", None)
+        if not callable(loader):
+            return None
+        try:
+            return list(loader(state, position, limit=limit, team=team))
+        except Exception:  # noqa: BLE001 — оверлей не должен падать
+            return None
+
     def _meta_win_rates(self) -> dict[int, float]:
-        """hero_id -> win_rate из мета-топа (для подписи WR на карточке)."""
+        """hero_id -> винрейт среза «все ранги» для подписи WR на карточке.
+
+        Раньше брали только топ-15 по винрейту, из-за чего часть карточек
+        оставалась без WR. Теперь — весь мета-срез (он уже в кэше сервиса).
+        """
+        rows = self._meta_rows()
+        if rows:
+            return {row.hero_id: float(row.win_rate) for row in rows}
         try:
             summary = self._news.get_meta_summary(limit=15)
         except Exception:  # noqa: BLE001 — мета не обязательна для оверлея
@@ -153,6 +201,15 @@ class OverlayViewModel:
         return {
             hero.id: float(win_rate) for hero, win_rate, _pick in summary.top
         }
+
+    def _meta_rows(self) -> list[MetaRow]:
+        """Строки мета-среза из загрузчика (или пусто, если он не задан)."""
+        if self._meta_loader is None:
+            return []
+        try:
+            return list(self._meta_loader(limit=200))
+        except Exception:  # noqa: BLE001 — мета не обязательна для оверлея
+            return []
 
     def _picked_hero(
         self, state: DraftSession, team: str, position: int,
@@ -172,6 +229,24 @@ class OverlayViewModel:
 
 
 _LARGE_LIMIT = 200
+
+
+def _flatten_suggestions(
+    columns: dict[int, list[OverlayEntry]], limit: int,
+) -> list[OverlayEntry]:
+    """Лучшие уникальные герои команды по всем позициям (для блока подсказок)."""
+    if limit <= 0:
+        return []
+    seen: set[int] = set()
+    merged: list[OverlayEntry] = []
+    for position in sorted(columns):
+        for entry in columns[position]:
+            if entry.hero.id in seen:
+                continue
+            seen.add(entry.hero.id)
+            merged.append(entry)
+    merged.sort(key=lambda entry: (-entry.score, entry.hero.localized_name))
+    return merged[:limit]
 
 
 def _next_team(state: DraftSession) -> str:
@@ -195,20 +270,33 @@ def _classify_reason(
     score: float,
     baseline: dict[int, float],
     opponents: set[int],
-    priorities: dict[int, list[int]],
     meta_wr: dict[int, float],
 ) -> str:
     """Выбор текста причины карточки."""
-    if hero.id in priorities.get(position, []):
-        return "Приоритет позиции"
     if opponents and hero.id in baseline:
         delta = score - baseline[hero.id]
         if delta > _COUNTER_DELTA:
             return "Контр-пик"
     wr = meta_wr.get(hero.id)
     if wr is not None:
-        return f"Мета · WR {wr:.1f}%"
+        return "Мета"
     return "Подбор по позициям"
 
 
-_COUNTER_DELTA = 0.5
+def _reason_from_detail(
+    rec: Recommendation,
+    position: int,
+) -> str:
+    """Причина карточки по разложению счёта (контр-пик > связка > мета)."""
+    if rec.counter >= _COUNTER_DELTA:
+        return "Контр-пик"
+    if rec.synergy >= _SYNERGY_DELTA:
+        return "Связка"
+    if rec.meta_win_rate is not None and rec.meta_win_rate >= _META_WR_MIN:
+        return "Мета"
+    return "Подбор по позициям"
+
+
+_COUNTER_DELTA = 2.0
+_SYNERGY_DELTA = 1.5
+_META_WR_MIN = 51.0

@@ -1,6 +1,4 @@
-"""Настройки оверлея/тем/приоритетов через SettingsRepository. Контракт T-009."""
-
-import json
+"""Настройки оверлея/тем через SettingsRepository. Контракт T-009."""
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -12,7 +10,6 @@ _KEY_OPACITY = "overlay_opacity"
 _KEY_THEME = "overlay_theme"
 _KEY_CLICK = "overlay_click_through"
 _KEY_SHOW_DIRE = "overlay_show_dire"
-_KEY_PRIORITIES = "position_priorities"
 
 _VALID_THEMES = ("dark", "light")
 
@@ -57,7 +54,7 @@ class SettingsService:
         self._set(_KEY_POS_X, str(int(x)))
         self._set(_KEY_POS_Y, str(int(y)))
 
-    # --- Прозрачность ---
+    # --- Непрозрачность ---
     def get_opacity(self) -> float:
         """0.0..1.0, дефолт 0.85."""
         try:
@@ -66,7 +63,7 @@ class SettingsService:
             return 0.85
 
     def set_opacity(self, value: float) -> None:
-        """Сохраняет прозрачность, кламп в [0.0, 1.0]."""
+        """Сохраняет непрозрачность, кламп в [0.0, 1.0]."""
         clamped = max(0.0, min(1.0, float(value)))
         self._set(_KEY_OPACITY, repr(clamped))
 
@@ -102,43 +99,3 @@ class SettingsService:
     def set_show_dire(self, flag: bool) -> None:
         """Сохраняет флаг Dire."""
         self._set(_KEY_SHOW_DIRE, "1" if flag else "0")
-
-    # --- Приоритеты позиций (game-agent) ---
-    def get_position_priorities(self) -> dict[int, list[int]]:
-        """Позиция 1..5 -> список hero_id в порядке предпочтения."""
-        raw = self._get(_KEY_PRIORITIES, None)
-        if not raw:
-            return {}
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        result: dict[int, list[int]] = {}
-        for key, ids in data.items():
-            try:
-                position = int(key)
-            except (TypeError, ValueError):
-                continue
-            if not 1 <= position <= 5 or not isinstance(ids, list):
-                continue
-            parsed: list[int] = []
-            for raw in ids:
-                try:
-                    hero_id = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                if hero_id >= 1:
-                    parsed.append(hero_id)
-            result[position] = parsed
-        return result
-
-    def set_position_priorities(self, priorities: dict[int, list[int]]) -> None:
-        """Сохраняет приоритеты; валидные позиции 1..5, hero_id >= 1."""
-        clean: dict[int, list[int]] = {}
-        for position, hero_ids in priorities.items():
-            if 1 <= int(position) <= 5:
-                ids = [int(h) for h in hero_ids if int(h) >= 1]
-                clean[int(position)] = ids
-        self._set(_KEY_PRIORITIES, json.dumps(clean, ensure_ascii=False))

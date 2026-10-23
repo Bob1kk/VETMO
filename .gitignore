@@ -10,11 +10,24 @@ venv/
 htmlcov/
 dist/
 build/
+# Установщики коммитятся в ветку релиза (release/public-installer),
+# чтобы их можно было скачать прямо из репозитория.
+release/*
+!release/VETMO-Setup-*.exe
+!release/VETMO-Admin-Setup-*.exe
+!release/SHA256SUMS.txt
 *.egg-info/
 *.spec.bak
 
 # Секреты
 .env
+.env.local
+pop.txt
+secrets.env
+api.txt
+n8n_api_key.txt
+*.n8n.key
+n8n/.secrets
 
 # Логи и БД
 logs/

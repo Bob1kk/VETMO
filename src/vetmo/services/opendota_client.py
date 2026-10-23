@@ -166,6 +166,11 @@ class OpenDotaClient:
         """Только версия последнего патча (совместимый helper)."""
         return self.latest_patch()[0]
 
+    def fetch_hero_stats(self) -> list[dict[str, Any]] | None:
+        """Сырой список ``heroStats`` (последние 7 дней) без кэш-логики."""
+        data = self._request("heroStats")
+        return data if isinstance(data, list) else None
+
     @staticmethod
     def _patch_date(raw: object) -> datetime | None:
         """ISO-дата OpenDota -> naive UTC; битую строку игнорируем."""
@@ -194,8 +199,13 @@ class OpenDotaClient:
         return elapsed_hours < float(self._settings.cache_ttl_hours)
 
     # --- синхронизация героев ---
-    def sync_heroes(self, limit: int = 0) -> SyncResult:
+    def sync_heroes(
+        self, limit: int = 0, data: list[dict[str, Any]] | None = None
+    ) -> SyncResult:
         """GET heroStats -> upsert героев + мета v2; кэш TTL -> сеть не трогается.
+
+        ``data`` позволяет передать уже загруженный ``heroStats`` (чтобы не
+        делать второй запрос при записи меты в Supabase).
 
         limit: 0 — синхронизировать всех героев (каталог OpenDota растёт,
         фиксированные 120 оставляли новых героев без данных и искажали
@@ -214,7 +224,8 @@ class OpenDotaClient:
             if self._cache_is_fresh(settings_repo):
                 count = HeroRepository(session).count()
                 return SyncResult(total=count, ok=count)
-        data = self._request("heroStats")
+        if data is None:
+            data = self._request("heroStats")
         if not isinstance(data, list):
             logger.warning("heroStats недоступен — offline, БД не тронута")
             return SyncResult(skipped=max(1, limit))

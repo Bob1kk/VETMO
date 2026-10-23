@@ -1,0 +1,47 @@
+VETMO Admin — что нужно для работы
+=================================
+
+VETMO Admin читает секреты из файла:
+
+    %APPDATA%\VETMO\secrets.env
+
+(путь можно переопределить переменной окружения VETMO_SYNC_SECRETS_FILE).
+
+Установщик создаёт пустой каталог %APPDATA%\VETMO, но сам файл secrets.env
+намеренно не создаёт: секреты не распространяются вместе с установщиком.
+
+Создайте secrets.env вручную и заполните обязательные переменные (значения
+выдаёт администратор проекта):
+
+    VETMO_SYNC_SUPABASE_URL=https://<проект>.supabase.co
+    VETMO_SYNC_SERVICE_KEY=<service_role-ключ>
+    VETMO_SYNC_STRATZ_TOKEN=<токен STRATZ>
+
+Необязательные параметры:
+
+    VETMO_SYNC_OPENDOTA_BASE_URL=https://api.opendota.com/api/
+    VETMO_SYNC_OPENDOTA_RATE_LIMIT_PER_MIN=60
+    VETMO_SYNC_OPENDOTA_CACHE_TTL_HOURS=24.0
+    VETMO_SYNC_HTTP_TIMEOUT=45.0
+
+Если файла нет или в нём отсутствует обязательная переменная, Admin покажет
+диалог с путём к файлу и завершится с кодом 2. Проверить конфигурацию без
+графического интерфейса можно так:
+
+    "C:\Users\<пользователь>\AppData\Local\Programs\VETMO Admin\VETMO-Admin.exe" --self-check
+
+Коды возврата: 0 — секреты прочитаны, 2 — секретов нет (подробности в
+%APPDATA%\VETMO\logs\vetmo.log).
+
+Назначение Admin
+----------------
+
+1. «Обзор» и «Мета» — просмотр reference-данных из Supabase.
+2. «Синхронизация» — запуск OpenDota (мета, герои, патчи) и STRATZ
+   (контрпики, синергии, баны) с записью результатов через service_role.
+3. История запусков sync с ошибками и временем выполнения.
+
+Пользовательской версии VETMO (VETMO.exe) секреты не нужны: она читает
+публичные данные через anon-ключ, а запись выполняет только Admin.
+
+ВАЖНО: не публикуйте secrets.env и не передавайте его вместе со сборкой.

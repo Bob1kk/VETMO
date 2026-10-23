@@ -30,8 +30,11 @@ def test_main_window_shows_news_panel(make_window, qtbot) -> None:
     assert meta is not None and meta.parent() is not None
     assert news.isVisibleTo(window)
     assert meta.isVisibleTo(window)
-    # воркер новостей отработал (заглушка вернула ([], is_online=True)).
-    qtbot.waitUntil(lambda: news._badge.text() == "Онлайн", timeout=10000)
+    # панель новостей отработала (заглушка вернула ([], True)).
+    qtbot.waitUntil(
+        lambda: "Новостей пока нет" in news._placeholder.text(),
+        timeout=10000,
+    )
     assert news.row_count() == 0
     assert "Новостей пока нет" in news._placeholder.text()
 
@@ -76,16 +79,16 @@ def test_esc_hides_overlay_and_restores_button(make_window) -> None:
 def test_startup_workers_complete_without_crash(
     make_window, qtbot
 ) -> None:
-    """Авто-синк на пустой БД: воркеры завершаются, статус «Синхронизация готова».
+    """Авто-пуск на пустом каталоге: воркеры завершаются, статус показывает размер каталога.
 
-    Сеть заглушена (SyncResult(total=0, ok=0)), поэтому счёт 0/0.
+    Сеть заглушена, каталог из seed-фолбэка (127 героев).
     """
     window = make_window()
     qtbot.waitUntil(
-        lambda: window.status_label_text().startswith("Синхронизация готова"),
+        lambda: window.status_label_text().startswith("Готово. Героев в каталоге:"),
         timeout=10000,
     )
-    assert "героев 0/0" in window.status_label_text()
+    assert "127" in window.status_label_text()
 
 
 def test_overlay_gear_opens_settings_tab(make_window) -> None:

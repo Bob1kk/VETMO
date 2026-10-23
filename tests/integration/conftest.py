@@ -17,9 +17,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from vetmo.data.db import create_db, migrate
-from vetmo.infra.supabase_stub import SupabaseClient
-from vetmo.services.news_service import NewsService
-from vetmo.services.opendota_client import OpenDotaClient, SyncResult
+from vetmo.infra.supabase_gateway import SupabaseGateway
+from vetmo.services.live_news import LiveNewsService
 
 if TYPE_CHECKING:
     from vetmo.ui.main_window import MainWindow
@@ -37,41 +36,28 @@ def db(tmp_path: Path) -> Iterator[tuple[Engine, sessionmaker[Session]]]:
 
 @pytest.fixture()
 def app_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Автономное окружение: tmp SQLite + все сетевые точки заглушены."""
+    """Автономное окружение: все сетевые точки заглушены до build_app."""
     monkeypatch.setenv(
         "VETMO_DB_URL", f"sqlite:///{(tmp_path / 'ui.db').as_posix()}")
+    # SupabaseGateway.select — заглушка для чтения reference-данных
     monkeypatch.setattr(
-        OpenDotaClient,
-        "sync_heroes",
-        lambda self, limit=120: SyncResult(total=0, ok=0),
+        SupabaseGateway,
+        "select",
+        lambda self, table, *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        OpenDotaClient,
-        "sync_matchups",
-        lambda self, hero_ids=None, rivals_per_hero=30: SyncResult(
-            total=0, ok=0),
+        SupabaseGateway,
+        "rpc",
+        lambda self, name, params: [],
     )
     monkeypatch.setattr(
-        OpenDotaClient,
-        "sync_matchups_all",
-        lambda self, resume=True, min_games=100: {
-            "total": 0, "synced": 0, "skipped": 0, "last_hero_id": None,
-        },
+        SupabaseGateway,
+        "is_configured",
+        property(lambda self: False),
     )
+    # LiveNewsService.get_latest_patch_news — заглушка новостей
     monkeypatch.setattr(
-        OpenDotaClient,
-        "sync_icon_cache",
-        lambda self, icons_dir="", http_client=None: {
-            "downloaded": 0, "cached": 0, "failed": 0,
-        },
-    )
-    monkeypatch.setattr(
-        SupabaseClient,
-        "sync_meta_snapshot",
-        lambda self, limit=50: {"enabled": False, "sent": 0},
-    )
-    monkeypatch.setattr(
-        NewsService,
+        LiveNewsService,
         "get_latest_patch_news",
         lambda self, limit=5: ([], True),
     )

@@ -4,7 +4,6 @@ import pytest
 
 from vetmo.data.repositories.counter_repo import CounterRepository
 from vetmo.data.repositories.hero_repo import HeroRepository
-from vetmo.data.repositories.settings_repo import SettingsRepository
 from vetmo.domain.models import Hero
 from vetmo.services.draft_service import DraftService
 
@@ -31,11 +30,9 @@ def svc(db) -> DraftService:
 
 @pytest.fixture()
 def svc_full(db) -> DraftService:
-    """Как svc + приоритеты позиции 1: [101, 102]."""
+    """Как svc: сервис на полном каталоге без меты."""
     _, sessionmaker = db
     _add_heroes(sessionmaker)
-    with sessionmaker() as session:
-        SettingsRepository(session).set("position_priorities", '{"1": [101, 102]}')
     return DraftService(sessionmaker)
 
 
@@ -96,13 +93,13 @@ def test_get_state_creates_session_if_missing(svc: DraftService) -> None:
 
 
 def test_recommendations_nonempty_and_sorted(svc_full: DraftService) -> None:
-    """Рекомендации без меты: приоритетные первыми, отсортированы по score."""
+    """Рекомендации без меты: отсортированы по score, затем по имени."""
     recs = svc_full.get_recommendations(1, limit=5)
     assert len(recs) > 0
     scores = [s for _, s in recs]
     assert scores == sorted(scores, reverse=True)
-    assert recs[0][0].id == 101  # приоритет позиции 1 -> hero-101
-    assert recs[0][1] == 10.0
+    assert recs[0][0].id == 100  # все score 0.0 -> порядок по имени
+    assert recs[0][1] == 0.0
 
 
 def test_recommendations_exclude_picked_hero(svc_full: DraftService) -> None:
@@ -112,11 +109,31 @@ def test_recommendations_exclude_picked_hero(svc_full: DraftService) -> None:
     recs = svc_full.get_recommendations(1, session_id=state.id, limit=5)
     ids = [h.id for h, _ in recs]
     assert 101 not in ids
-    assert ids[0] == 102  # следующий по приоритету
+    assert ids[0] == 100
+
+
+def test_recommendations_for_none_state_is_baseline(
+    svc_full: DraftService,
+) -> None:
+    """state=None — базовая линия: пики не учитываются (Δ контр-пика)."""
+    state = svc_full.start_session()
+    state = svc_full.add_pick_auto(None, hero_id=101, session_id=state.id)
+
+    baseline = [
+        hero.id for hero, _ in svc_full.get_recommendations_for(
+            None, 1, limit=5)
+    ]
+    current = [
+        hero.id for hero, _ in svc_full.get_recommendations_for(
+            state, 1, limit=5)
+    ]
+
+    assert 101 in baseline  # без состояния герой ещё «свободен»
+    assert 101 not in current
 
 
 def test_recommendations_without_priorities(db) -> None:
-    """Без приоритетов и меты: непустой список со score 0.0, отсортирован."""
+    """Без меты и контрпиков: непустой список со score 0.0, отсортирован."""
     _, sessionmaker = db
     _add_heroes(sessionmaker)
     service = DraftService(sessionmaker)
@@ -161,19 +178,6 @@ def test_recommendations_supporting_role_partial_fit(db) -> None:
     service = DraftService(sessionmaker)
     pos3 = dict((h.id, s) for h, s in service.get_recommendations(3, limit=10))
     assert pos3[202] == 3.0  # 0.6 (поддерживающая) * 5.0
-
-
-def test_recommendations_use_settings_service_priorities(db) -> None:
-    """DraftService берёт приоритеты из SettingsService, если привязан."""
-    from vetmo.services.settings_service import SettingsService
-    _, sessionmaker = db
-    _add_heroes(sessionmaker)
-    settings_service = SettingsService(sessionmaker)
-    settings_service.set_position_priorities({1: [104]})
-    service = DraftService(sessionmaker, settings_service=settings_service)
-    recs = service.get_recommendations(1, limit=3)
-    assert recs[0][0].id == 104
-    assert recs[0][1] == 10.0
 
 
 def test_recommendations_use_enemy_of_team_on_clock(db) -> None:

@@ -14,9 +14,7 @@ from vetmo.domain.rules import (
     suggest_position,
     team_for_step,
 )
-from vetmo.services.settings_service import SettingsService
 
-_PRIORITY_BONUS = 10.0
 _POSITION_FIT_WEIGHT = 5.0
 _TOOLTIP_ROWS = 5
 
@@ -35,11 +33,9 @@ class DraftService:
     def __init__(
         self, sessionmaker: sessionmaker[Session],
         hero_repo_cls: type = HeroRepository,
-        settings_service: SettingsService | None = None,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._hero_repo_cls = hero_repo_cls
-        self._settings_service = settings_service
 
     # --- сессии ---
     def start_session(self) -> DraftSession:
@@ -127,17 +123,11 @@ class DraftService:
         return self.add_pick(team, position, hero_id, session_id=state.id)
 
     # --- рекомендации ---
-    def _get_priorities(self) -> dict[int, list[int]]:
-        """Приоритеты: от SettingsService, если привязан, иначе из БД."""
-        if self._settings_service is not None:
-            return self._settings_service.get_position_priorities()
-        return SettingsService(self._sessionmaker).get_position_priorities()
-
     def get_recommendations(
         self, position: int, session_id: int | None = None,
         limit: int = 5, team: Team | None = None,
     ) -> list[tuple[Hero, float]]:
-        """[(Hero, score)] по убыванию; без меты/контрпиков — приоритеты и каталог.
+        """[(Hero, score)] по убыванию; без меты/контрпиков — каталог и фит.
 
         team — перспектива (чья колонка рекомендаций); по умолчанию команда,
         которая пикает на текущем шаге. Контрпики считаются против соперника
@@ -147,7 +137,6 @@ class DraftService:
             raise ValueError(f"Позиция вне 1..5: {position}")
         if limit <= 0:
             return []
-        priorities = self._get_priorities()
         with self._sessionmaker() as session:
             heroes = HeroRepository(session).get_all()
             if not heroes:
@@ -172,11 +161,26 @@ class DraftService:
                     continue
                 score = self._score_hero(
                     session, hero, position, enemy_ids,
-                    meta_repo, counter_repo, priorities,
+                    meta_repo, counter_repo,
                 )
                 candidates.append((hero, score))
             candidates.sort(key=lambda t: (-t[1], t[0].localized_name))
             return candidates[:limit]
+
+    def get_recommendations_for(
+        self, state: DraftSession | None, position: int,
+        limit: int = 5, team: Team | None = None,
+    ) -> list[tuple[Hero, float]]:
+        """Рекомендации по уже загруженному состоянию (без повторного чтения).
+
+        ``state=None`` — базовая линия без пиков (контр-пик Δ в оверлее).
+        """
+        return self.get_recommendations(
+            position,
+            state.id if state is not None else None,
+            limit=limit,
+            team=team,
+        )
 
     def get_matchup_tooltip(
         self, hero_id: int,
@@ -203,9 +207,8 @@ class DraftService:
         self, session: Session, hero: Hero, position: int,
         enemy_ids: set[int],
         meta_repo: MetaRepository, counter_repo: CounterRepository,
-        priorities: dict[int, list[int]],
     ) -> float:
-        """Скоринг: мета + контрпики − enemy контрит + приоритет + position_fit."""
+        """Скоринг: мета + контрпики − enemy контрит + position_fit."""
         score = 0.0
         has_meta = has_counters = False
         meta = meta_repo.get_meta(hero.id)
@@ -222,14 +225,11 @@ class DraftService:
                     score -= wr_against
                     has_counters = True
         # Пустая таблица синергий: win_rate_with=0 (данных от API нет).
-        is_priority = hero.id in priorities.get(position, [])
-        if is_priority:
-            score += _PRIORITY_BONUS
         # Ролевой фит: 1.0 первичная роль, 0.6 поддерживающая (см. rules.POSITION_ROLES).
         # Вес до +5.0: мета/контрпики доминируют, carry не вылезает на pos 5.
         fit = position_fit(tuple(hero.roles), position)
         score += fit * _POSITION_FIT_WEIGHT
-        # Фолбэк: данных (мета/контрпики/приоритет) нет и фит нулевой — мусор не выдаём.
-        if not (has_meta or has_counters or is_priority) and fit == 0.0:
+        # Фолбэк: данных (мета/контрпики) нет и фит нулевой — мусор не выдаём.
+        if not (has_meta or has_counters) and fit == 0.0:
             return 0.0
         return score
