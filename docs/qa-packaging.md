@@ -65,10 +65,10 @@
 
 | Файл | Размер, байт | Размер, МиБ |
 |---|---:|---:|
-| `dist/VETMO.exe` | 67 567 628 | 64,44 |
-| `dist/VETMO-Admin.exe` | 69 374 100 | 66,16 |
-| `release/VETMO-Setup-0.1.0.exe` | 68 667 404 | 65,49 |
-| `release/VETMO-Admin-Setup-0.1.0.exe` | 70 601 884 | 67,33 |
+| `dist/VETMO.exe` | 67 558 990 | 64,43 |
+| `dist/VETMO-Admin.exe` | 69 374 701 | 66,16 |
+| `release/VETMO-Setup-0.2.0.exe` | 68 657 384 | 65,48 |
+| `release/VETMO-Admin-Setup-0.2.0.exe` | 70 602 704 | 67,33 |
 
 Установщики коммитятся в ветку (исключение в `.gitignore`),
 чтобы пользователи скачивали их прямо из `release/`; `dist/` и `build/`
@@ -113,8 +113,8 @@
 
 | Установщик | Каталог | Проверка |
 |---|---|---|
-| `VETMO-Setup-0.1.0.exe` | `%LOCALAPPDATA%\Programs\VETMO` | `/VERYSILENT /NOICONS /DIR=...` → exe на месте → smoke → `unins000.exe /VERYSILENT` → каталог удалён |
-| `VETMO-Admin-Setup-0.1.0.exe` | `%LOCALAPPDATA%\Programs\VETMO Admin` | то же + `--self-check` установленного exe |
+| `VETMO-Setup-0.2.0.exe` | `%LOCALAPPDATA%\Programs\VETMO` | `/VERYSILENT /NOICONS /DIR=...` → exe на месте → smoke → `unins000.exe /VERYSILENT` → каталог удалён |
+| `VETMO-Admin-Setup-0.2.0.exe` | `%LOCALAPPDATA%\Programs\VETMO Admin` | то же + `--self-check` установленного exe |
 
 Оба установщика per-user (`PrivilegesRequired=lowest`), поддерживают русский и
 английский языки, создают ярлыки в «Пуск» и (опционально) на рабочем столе.
@@ -122,7 +122,7 @@
 
 ## Тесты
 
-`pytest tests/ -q` — 238 passed, включая:
+`pytest tests/ -q` — 234 passed, включая:
 
 - `tests/integration/test_overlay_window.py` — клетки 1..5, клик по клетке,
   крестик очистки, подсказки, `show_dire`, перетаскивание;
