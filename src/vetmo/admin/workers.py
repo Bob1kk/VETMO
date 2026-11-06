@@ -96,6 +96,7 @@ class SyncRunner(QThread):
             "patch_id": stats.patch_id,
             "patch_version": stats.patch_version,
             "rows_meta": stats.rows_meta,
+            "rows_daily": stats.rows_daily,
             "rows_matchups": stats.rows_matchups,
             "slices": stats.slices,
             "period": stats.period,
