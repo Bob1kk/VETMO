@@ -631,7 +631,7 @@ def sync_stratz_matchups(
                 break
             try:
                 groups = client.matchup_groups(
-                    hero_ids, take=300, bracket=bracket,
+                    hero_ids, take=1000, bracket=bracket,
                 )
                 bracket_rows: list[dict[str, Any]] = []
                 for hero_id in hero_ids:

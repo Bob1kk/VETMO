@@ -50,10 +50,7 @@ _POSITIONS: tuple[tuple[int, str], ...] = ()
 _HEADERS = (
     "Герой",
     "Winrate",
-    "Δ Winrate",
     "Pickrate",
-    "Δ Pickrate",
-    "Banrate",
     "Матчи",
 )
 
@@ -220,46 +217,28 @@ class MetaTab(QWidget):
             )
             win = as_float(row.get("win_rate"))
             pick = as_float(row.get("pick_rate"))
-            ban = as_float(row.get("ban_rate"))
             matches = row.get("match_count")
             self._model.appendRow(
-                [
-                    make_item(hero, sort_value=hero.casefold()),
-                    make_item(
-                        format_rate(win),
-                        sort_value=win if win is not None else -1.0,
-                        color=_rate_color(win),
-                        align_right=True,
-                    ),
-                    make_item(
-                        format_delta(row.get("delta_win")),
-                        sort_value=as_float(row.get("delta_win"), -999.0),
-                        color=_delta_color(row.get("delta_win")),
-                        align_right=True,
-                    ),
-                    make_item(
-                        format_rate(pick),
-                        sort_value=pick if pick is not None else -1.0,
-                        align_right=True,
-                    ),
-                    make_item(
-                        format_delta(row.get("delta_pick")),
-                        sort_value=as_float(row.get("delta_pick"), -999.0),
-                        color=_delta_color(row.get("delta_pick")),
-                        align_right=True,
-                    ),
-                    make_item(
-                        format_rate(ban),
-                        sort_value=ban if ban is not None else -1.0,
-                        align_right=True,
-                    ),
-                    make_item(
-                        format_int(matches),
-                        sort_value=matches or 0,
-                        align_right=True,
-                    ),
-                ]
-            )
+            [
+                make_item(hero, sort_value=hero.casefold()),
+                make_item(
+                    format_rate(win),
+                    sort_value=win if win is not None else -1.0,
+                    color=_rate_color(win),
+                    align_right=True,
+                ),
+                make_item(
+                    format_rate(pick),
+                    sort_value=pick if pick is not None else -1.0,
+                    align_right=True,
+                ),
+                make_item(
+                    format_int(matches),
+                    sort_value=matches or 0,
+                    align_right=True
+                ),
+            ]
+        )
         self._table.setSortingEnabled(True)
         self._table.sortByColumn(1, Qt.SortOrder.DescendingOrder)
 
