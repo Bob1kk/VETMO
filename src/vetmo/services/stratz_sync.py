@@ -55,6 +55,7 @@ class SyncStats:
     patch_version: str | None = None
     patch_id: int | None = None
     rows_meta: int = 0
+    rows_daily: int = 0
     rows_matchups: int = 0
     slices: int = 0
     errors: list[str] = field(default_factory=list)
@@ -84,6 +85,70 @@ def _as_int(value: object) -> int | None:
 def _upsert(gateway: SupabaseGateway, table: str, rows: list[dict[str, Any]], conflict: str) -> None:
     if rows:
         gateway.upsert(table, rows, on_conflict=conflict)
+
+
+DAILY_WINDOW_DAYS = 7
+
+
+def _daily_trend_rows(
+    record: dict[str, Any], *, patch_id: int, end_date: date,
+) -> list[dict[str, Any]]:
+    """Разложить ``pub_*_trend`` OpenDota в дневные строки.
+
+    OpenDota отдаёт до 7 дневных корзин: последняя — текущие (неполные)
+    сутки. Если тренды отсутствуют или битые, возвращаем пустой список:
+    вызывающий код тогда откатывается на суммарные ``pub_pick/pub_win``.
+    """
+    hero_id = _as_int(record.get("id"))
+    if hero_id is None or hero_id <= 0:
+        return []
+    picks = record.get("pub_pick_trend")
+    wins = record.get("pub_win_trend")
+    if not isinstance(picks, list) or not isinstance(wins, list):
+        return []
+    size = min(len(picks), len(wins), DAILY_WINDOW_DAYS)
+    if size <= 0:
+        return []
+    rows: list[dict[str, Any]] = []
+    for offset, (raw_pick, raw_win) in enumerate(
+        zip(picks[-size:], wins[-size:], strict=True)
+    ):
+        matches = _as_int(raw_pick)
+        win_count = _as_int(raw_win)
+        if matches is None or win_count is None:
+            return []
+        stat_date = end_date - timedelta(days=size - 1 - offset)
+        rows.append({
+            "stat_date": stat_date.isoformat(),
+            "patch_id": patch_id,
+            "hero_id": hero_id,
+            "rank_tier": 0,
+            "position": 0,
+            "game_mode": "ALL_PICK_RANKED",
+            "match_count": max(0, matches),
+            "win_count": min(max(0, win_count), max(0, matches)),
+            "source": "opendota",
+            "updated_at": datetime.now(UTC).isoformat(),
+        })
+    return rows
+
+
+def _rolling_daily_totals(
+    rows: list[dict[str, Any]], *, end_date: date, days: int = DAILY_WINDOW_DAYS,
+) -> tuple[int, int]:
+    """Сумма дневных матчей/побед за окно ``days`` включительно."""
+    start_date = end_date - timedelta(days=max(0, days - 1))
+    matches = wins = 0
+    for row in rows:
+        try:
+            stat_date = date.fromisoformat(str(row.get("stat_date")))
+        except ValueError:
+            continue
+        if not start_date <= stat_date <= end_date:
+            continue
+        matches += max(0, _as_int(row.get("match_count")) or 0)
+        wins += max(0, _as_int(row.get("win_count")) or 0)
+    return matches, min(wins, matches)
 
 
 def _resolve_patch(gateway: SupabaseGateway, patch_version: str) -> int:
@@ -116,8 +181,8 @@ def _resolve_patch(gateway: SupabaseGateway, patch_version: str) -> int:
 def _previous_snapshot_map(
     gateway: SupabaseGateway, patch_id: int, snapshot_date: date,
 ) -> dict[tuple[int, int], dict[str, Any]]:
-    """Словарь (hero_id, rank_tier) -> строка ближайшего снапшота не моложе 7 дней."""
-    cutoff = (snapshot_date - timedelta(days=7)).isoformat()
+    """Словарь (hero_id, rank_tier) -> предыдущий доступный снимок."""
+    cutoff = (snapshot_date - timedelta(days=1)).isoformat()
     dates = gateway.select(
         "vetmo_snapshots", columns="snapshot_date",
         filters={
@@ -223,18 +288,76 @@ def sync_opendota_meta(
         totals = {0: total_pub_pick, **tier_totals}
 
         snapshot_date = datetime.now(UTC).date()
+        daily_rows: list[dict[str, Any]] = []
+        daily_by_hero: dict[int, list[dict[str, Any]]] = {}
+        daily_total_picks: dict[date, int] = {}
+        for record in raw:
+            hero_id = _as_int(record.get("id"))
+            if hero_id is None or hero_id <= 0:
+                continue
+            rows = _daily_trend_rows(
+                record, patch_id=patch_id, end_date=snapshot_date,
+            )
+            if not rows:
+                continue
+            daily_rows.extend(rows)
+            daily_by_hero[hero_id] = rows
+            for row in rows:
+                try:
+                    stat_date = date.fromisoformat(str(row["stat_date"]))
+                except ValueError:
+                    continue
+                daily_total_picks[stat_date] = (
+                    daily_total_picks.get(stat_date, 0)
+                    + int(row["match_count"])
+                )
+
+        window_start = snapshot_date - timedelta(days=DAILY_WINDOW_DAYS - 1)
+        window_total_picks = sum(
+            count for stat_date, count in daily_total_picks.items()
+            if window_start <= stat_date <= snapshot_date
+        )
+        if window_total_picks > 0:
+            totals[0] = float(window_total_picks)
+
         meta_rows: list[dict[str, Any]] = []
         snapshot_rows: list[dict[str, Any]] = []
+        stats.rows_daily = len(daily_rows)
+
+        if daily_rows:
+            try:
+                _upsert(
+                    gateway, "vetmo_hero_daily", daily_rows,
+                    "stat_date,patch_id,hero_id,rank_tier,position,game_mode",
+                )
+                progress(f"  vetmo_hero_daily: {len(daily_rows)} строк")
+            except Exception as exc:  # noqa: BLE001 - миграция может быть не применена
+                stats.errors.append(
+                    f"vetmo_hero_daily: {type(exc).__name__}: {exc}"
+                )
+                progress(
+                    "  vetmo_hero_daily: пропущено "
+                    f"({type(exc).__name__}: {exc})"
+                )
 
         for record in raw:
             hero_id = _as_int(record.get("id"))
             if hero_id is None or hero_id <= 0:
                 continue
 
+            daily = daily_by_hero.get(hero_id)
+            if daily:
+                rolling_matches, rolling_wins = _rolling_daily_totals(
+                    daily, end_date=snapshot_date,
+                )
+            else:
+                rolling_matches = int(float(record.get("pub_pick") or 0))
+                rolling_wins = int(float(record.get("pub_win") or 0))
+
             for rank_tier in (0, *range(1, 8)):
                 if rank_tier == 0:
-                    pick = float(record.get("pub_pick") or 0)
-                    win = float(record.get("pub_win") or 0)
+                    pick = float(rolling_matches)
+                    win = float(rolling_wins)
                     total = totals[0]
                 else:
                     pick = float(record.get(f"{rank_tier}_pick") or 0)
@@ -265,7 +388,7 @@ def sync_opendota_meta(
                     "snapshot_date": snapshot_date.isoformat(), **base,
                 })
 
-        # --- Дельты: относительное изменение к снапшоту ~7 дней назад ---
+        # --- Дельты: сравниваем с предыдущим снимком (обычно вчерашним) ---
         prev = _previous_snapshot_map(gateway, patch_id, snapshot_date)
         def _prev_float(row: dict[str, Any], key: str) -> float:
             try:
@@ -559,6 +682,7 @@ def sync_all(
         stats.patch_version = od_stats.patch_version
         stats.patch_id = od_stats.patch_id
         stats.rows_meta = od_stats.rows_meta
+        stats.rows_daily = od_stats.rows_daily
         stats.errors.extend(od_stats.errors)
         if od_stats.errors:
             progress("OpenDota часть завершена с ошибками")

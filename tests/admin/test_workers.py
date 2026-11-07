@@ -52,6 +52,7 @@ def test_sync_runner_emits_finished(
         patch_id=123,
         patch_version="7.40",
         rows_meta=42,
+        rows_daily=889,
         rows_matchups=7,
         slices=3,
         period="2026-10-10",
@@ -78,6 +79,7 @@ def test_sync_runner_emits_finished(
     assert payload["patch_id"] == 123
     assert payload["patch_version"] == "7.40"
     assert payload["rows_meta"] == 42
+    assert payload["rows_daily"] == 889
     assert payload["rows_matchups"] == 7
     assert payload["slices"] == 3
     assert payload["period"] == "2026-10-10"

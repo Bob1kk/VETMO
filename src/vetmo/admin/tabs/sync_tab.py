@@ -172,6 +172,7 @@ class SyncTab(QWidget):
             f"Патч: {summary.get('patch_version') or summary.get('patch_id') or '—'}"
         )
         self._append(f"Строк меты: {format_int(summary.get('rows_meta'))}")
+        self._append(f"Дневных строк: {format_int(summary.get('rows_daily'))}")
         self._append(f"Строк матчапов: {format_int(summary.get('rows_matchups'))}")
         self._append(f"Срезов: {format_int(summary.get('slices'))}")
         errors = summary.get("errors") or []
