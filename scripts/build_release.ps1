@@ -34,9 +34,15 @@ function Write-Ok([string]$Text) {
 }
 
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments, [string]$ErrorMessage) {
+    # PS 5.1: нативные команды пишут прогресс в stderr; при ErrorActionPreference=Stop
+    # это превращается в исключение. Временно ослабляем режим и проверяем код выхода.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $FilePath @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "$ErrorMessage (exit code $LASTEXITCODE)"
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $previous
+    if ($code -ne 0) {
+        throw "$ErrorMessage (exit code $code)"
     }
 }
 
@@ -224,8 +230,12 @@ function Assert-ArchiveModules(
     [string[]]$RequiredModules,
     [string]$Label
 ) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $archiveList = & $Python -m PyInstaller.utils.cliutils.archive_viewer -r -b $ExePath
-    if ($LASTEXITCODE -ne 0) {
+    $archiveCode = $LASTEXITCODE
+    $ErrorActionPreference = $previous
+    if ($archiveCode -ne 0) {
         throw "${Label}: не удалось прочитать список модулей"
     }
     $archiveText = $archiveList -join "`n"

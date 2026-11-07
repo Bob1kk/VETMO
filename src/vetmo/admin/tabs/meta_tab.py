@@ -22,7 +22,6 @@ from vetmo.admin.tabs.common import (
     OK_COLOR,
     as_float,
     configure_table,
-    format_delta,
     format_int,
     format_rate,
     make_item,
