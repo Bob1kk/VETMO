@@ -143,14 +143,14 @@ class DashboardTab(QWidget):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
         cards = (
-            ("patch", "ТЕКУЩИЙ ПАТЧ"),
-            ("run", "ПОСЛЕДНИЙ ЗАПУСК"),
-            ("fresh", "СВЕЖЕСТЬ ДАННЫХ"),
-            ("errors", "ОШИБКИ"),
-            ("meta", "СТРОК МЕТЫ"),
-            ("matchups", "СТРОК МАТЧАПОВ"),
-            ("period", "КОНЕЦ ПЕРИОДА"),
-            ("trigger", "ИСТОЧНИК ЗАПУСКА"),
+            ("patch", "Текущий патч"),
+            ("run", "Последний запуск"),
+            ("fresh", "Свежесть данных"),
+            ("errors", "Ошибки"),
+            ("meta", "Строк меты"),
+            ("matchups", "Строк матчапов"),
+            ("period", "Конец периода"),
+            ("trigger", "Источник запуска"),
         )
         for index, (key, label) in enumerate(cards):
             card = _Card(label, self)

@@ -71,7 +71,7 @@ class AdminWindow(QMainWindow):
 
         brand = QLabel("VETMO", self)
         brand.setObjectName("brandTitle")
-        brand_sub = QLabel("ADMIN · ОБНОВЛЕНИЕ БД", self)
+        brand_sub = QLabel("Admin · обновление базы", self)
         brand_sub.setObjectName("brandSubtitle")
 
         sidebar = QWidget(self)

@@ -30,9 +30,9 @@ from vetmo.domain.matchup import MatchupEntry, MatchupReport
 from vetmo.ui.widgets.hero_icon import resolve_icon, scale_icon
 from vetmo.ui.workers import start_worker
 
-_GREEN = "#43C59E"
-_YELLOW = "#E8B05A"
-_RED = "#E35D6A"
+_GREEN = "#63C99A"
+_YELLOW = "#E7B24A"
+_RED = "#E26D6D"
 
 _ICON_SIZE = 44
 _ROW_ICON = 26
@@ -152,7 +152,7 @@ class MatchupDialog(QDialog):
     # ------------------------------------------------------------- таблица --
     def _build_table(self, parent: QWidget) -> QTableWidget:
         table = QTableWidget(0, 4, parent)
-        table.setHorizontalHeaderLabels(("ГЕРОЙ", "ВИНРЕЙТ", "МАТЧИ", ""))
+        table.setHorizontalHeaderLabels(("Герой", "Винрейт", "Матчи", ""))
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(_ROW_HEIGHT)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

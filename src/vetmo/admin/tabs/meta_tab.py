@@ -191,7 +191,7 @@ class MetaTab(QWidget):
             self._loading = False
             self._clear_model()
             self._state.setText(f"Ошибка загрузки: {message}")
-            self._state.setStyleSheet("color: #E35D6A;")
+            self._state.setStyleSheet("color: #E26D6D;")
             self.status_message.emit(f"Мета: ошибка ({message})")
 
         start_worker(

@@ -148,7 +148,7 @@ class RunsTab(QWidget):
                 return
             self._refresh_button.setEnabled(True)
             self._state.setText(f"Ошибка загрузки истории: {message}")
-            self._state.setStyleSheet("color: #E35D6A;")
+            self._state.setStyleSheet("color: #E26D6D;")
             self.status_message.emit(f"История: ошибка ({message})")
 
         start_worker(

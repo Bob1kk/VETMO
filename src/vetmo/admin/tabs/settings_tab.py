@@ -26,8 +26,8 @@ from vetmo.ui.workers import start_worker
 if TYPE_CHECKING:
     from vetmo.admin.context import AdminContext
 
-_OK_STYLE = "color: #43C59E;"
-_BAD_STYLE = "color: #E35D6A;"
+_OK_STYLE = "color: #63C99A;"
+_BAD_STYLE = "color: #E26D6D;"
 
 
 class SettingsTab(QWidget):
@@ -126,11 +126,11 @@ class SettingsTab(QWidget):
         layout.setSpacing(10)
         layout.addWidget(title)
         layout.addWidget(subtitle)
-        layout.addWidget(self._section("СЕКРЕТЫ"))
+        layout.addWidget(self._section("Секреты"))
         layout.addLayout(secrets_form)
-        layout.addWidget(self._section("ПОДКЛЮЧЕНИЯ"))
+        layout.addWidget(self._section("Подключения"))
         layout.addLayout(connections_form)
-        layout.addWidget(self._section("ПРОВЕРКИ"))
+        layout.addWidget(self._section("Проверки"))
         layout.addLayout(buttons)
         layout.addWidget(self._result)
         layout.addStretch(1)

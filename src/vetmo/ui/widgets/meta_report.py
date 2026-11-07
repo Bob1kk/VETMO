@@ -42,17 +42,17 @@ from vetmo.ui.widgets.matchup import format_matchup_tooltip
 from vetmo.ui.widgets.matchup_dialog import MatchupDialog
 from vetmo.ui.workers import start_worker
 
-_GREEN = "#43C59E"
-_YELLOW = "#E8B05A"
-_RED = "#E35D6A"
-_GREY = "#8E99AD"
+_GREEN = "#63C99A"
+_YELLOW = "#E7B24A"
+_RED = "#E26D6D"
+_GREY = "#9AA69A"
 
 _ICON_SIZE = 36
 _ROW_HEIGHT = 52
 
 _COL_HERO, _COL_WR, _COL_DWR, _COL_PICK, _COL_BAN = range(5)
 _HEADERS = (
-    "ГЕРОЙ", "ВИНРЕЙТ", "ИЗМЕНЕНИЕ", "ПИКИ", "БАНЫ",
+    "Герой", "Винрейт", "Изменение", "Пики", "Баны",
 )
 
 _POSITION_OPTIONS: tuple[tuple[str, int], ...] = (
@@ -160,7 +160,7 @@ class RateCell(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         label = QLabel(_pct(value), self)
         label.setObjectName("metaRate")
-        label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ratio = (value or 0.0) / 100.0 if value is not None else 0.0
         column = QVBoxLayout(self)
         column.setContentsMargins(8, 7, 10, 7)
@@ -300,8 +300,8 @@ class MetaReportWidget(QFrame):
         self._count_label = QLabel(self)
         self._count_label.setObjectName("countLabel")
 
-        self._stat_wr = self._build_stat("СРЕДНИЙ WR")
-        self._stat_leader = self._build_stat("ЛИДЕР ПО WR")
+        self._stat_wr = self._build_stat("Средний винрейт")
+        self._stat_leader = self._build_stat("Лидер по винрейту")
         stats = QHBoxLayout()
         stats.setContentsMargins(0, 0, 0, 0)
         stats.setSpacing(8)
@@ -485,7 +485,7 @@ class MetaReportWidget(QFrame):
         """Экран данных: все строки среза, затем клиентская фильтрация."""
         self._rank_supported = report.rank_supported
         if report.period:
-            self._subtitle.setText(f"Ranked All Pick · {report.period}")
+            self._subtitle.setText(f"{report.period}")
         else:
             self._subtitle.setText("Ranked All Pick · последние 7 дней")
         normalized = (

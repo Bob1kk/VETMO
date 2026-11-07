@@ -226,7 +226,7 @@ class RawTab(QWidget):
             self._run_button.setEnabled(True)
             self._viewer.set_data(data)
             self._status.setText(f"HTTP 200 · {elapsed:.2f} с · {key}")
-            self._status.setStyleSheet("color: #43C59E;")
+            self._status.setStyleSheet("color: #63C99A;")
             self.status_message.emit(f"STRATZ: {key} выполнен за {elapsed:.2f} с")
 
         def fail(message: str) -> None:
@@ -234,7 +234,7 @@ class RawTab(QWidget):
             self._run_button.setEnabled(True)
             self._viewer.set_data({"error": message})
             self._status.setText(f"Ошибка: {message}")
-            self._status.setStyleSheet("color: #E35D6A;")
+            self._status.setStyleSheet("color: #E26D6D;")
             self.status_message.emit(f"STRATZ: ошибка ({message})")
 
         start_worker(job, on_done=done, on_fail=fail)

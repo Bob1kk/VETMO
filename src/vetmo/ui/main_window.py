@@ -36,7 +36,7 @@ _RECS_PER_POSITION = 5
 
 _NEWS_REFRESH_MS = 60 * 60 * 1000  # новости по таймеру: раз в час (R2, задача C)
 _META_ROWS_LIMIT = 200  # весь каталог Dota 2 (127 героев) + запас
-
+_STATUS_CLEAR_MS = 1000
 
 def _status_label(text: str) -> QLabel:
     """Подпись для статусбара (стили задаёт общая QSS-тема)."""
@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         self._overlay.set_heroes_loader(context.all_heroes)
         self._overlay.pick_requested.connect(self._on_overlay_pick)
         self._overlay.clear_requested.connect(self._on_overlay_clear)
+        self._overlay.closed_by_user.connect(self._on_overlay_closed_by_user)
         self._overlay.position_changed.connect(self._on_overlay_moved)
         self._meta_widget.set_matchup_loader(self._matchup_loader)
         self._meta_widget.set_matchup_details_loader(
@@ -105,7 +106,7 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- UI --
     def _build_ui(self) -> None:
-        self.setWindowTitle("VETMO — помощник драфта Dota 2")
+        self.setWindowTitle("VETMO")
         self.setMinimumSize(1240, 700)
         self.resize(1360, 800)
 
@@ -126,8 +127,8 @@ class MainWindow(QMainWindow):
         header = QFrame(self)
         header.setObjectName("appHeader")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(12, 8, 12, 8)
-        header_layout.setSpacing(10)
+        header_layout.setContentsMargins(16, 8, 16, 8)
+        header_layout.setSpacing(12)
         mark = QLabel(header)
         mark.setObjectName("brandMark")
         mark.setFixedSize(40, 40)
@@ -139,12 +140,6 @@ class MainWindow(QMainWindow):
             mark.setPixmap(brand_pixmap)
         title_box = QVBoxLayout()
         title_box.setSpacing(0)
-        brand = QLabel("VETMO", header)
-        brand.setObjectName("brandTitle")
-        subtitle = QLabel("DOTA 2 DRAFT INTELLIGENCE", header)
-        subtitle.setObjectName("brandSubtitle")
-        title_box.addWidget(brand)
-        title_box.addWidget(subtitle)
         header_layout.addWidget(mark)
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)
@@ -155,20 +150,20 @@ class MainWindow(QMainWindow):
         self._sidebar_tabs.setObjectName("sidebarTabs")
         self._sidebar_tabs.setMinimumWidth(320)
         self._sidebar_tabs.setMaximumWidth(368)
-        self._sidebar_tabs.addTab(self._news_widget, "НОВОСТИ")
-        self._sidebar_tabs.addTab(self._settings_panel, "НАСТРОЙКИ")
+        self._sidebar_tabs.addTab(self._news_widget, "Новости")
+        self._sidebar_tabs.addTab(self._settings_panel, "Настройки")
         self._sidebar_tabs.setCurrentIndex(0)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(10)
+        body.setSpacing(12)
         body.addWidget(self._sidebar_tabs)
         body.addWidget(self._meta_widget, 1)
 
         central = QWidget(self)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(14, 12, 14, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(12)
         layout.addWidget(header)
         layout.addLayout(body, 1)
         self.setCentralWidget(central)
@@ -207,7 +202,6 @@ class MainWindow(QMainWindow):
             "opacity": service.get_opacity(),
             "theme": service.get_theme(),
             "click_through": service.get_click_through(),
-            "show_dire": service.get_show_dire(),
             "monitor": service.get_monitor_index(),
         }
 
@@ -230,7 +224,7 @@ class MainWindow(QMainWindow):
             self.status(
                 "Каталог героев пуст: примените миграцию и seed Supabase.")
         else:
-            self.status(f"Готово. Героев в каталоге: {number}")
+            self._transient_status(f"Готово. Героев в каталоге: {number}")
         self._refresh_overlay()
 
     # ------------------------------------------------------- data loading --
@@ -280,6 +274,14 @@ class MainWindow(QMainWindow):
         """Сообщение в статусбаре (справа — версия)."""
         self._status_label.setText(text)
 
+    def _transient_status(self, text: str, timeout_ms: int = _STATUS_CLEAR_MS) -> None:
+        self.status(text)
+        QTimer.singleShot(timeout_ms, lambda: self._clear_status_if(text))
+
+    def _clear_status_if(self, expected: str) -> None:
+        if self._status_label.text() == expected:
+            self.status("")
+
     def status_label_text(self) -> str:
         """Текущий текст статуса (для смоука/тестов)."""
         return self._status_label.text()
@@ -321,7 +323,7 @@ class MainWindow(QMainWindow):
         self._settings_panel.set_sync_enabled(True)
         self._refresh_db_button.setEnabled(True)
         number = count if isinstance(count, int) else 0
-        self.status(f"Данные Supabase обновлены. Героев: {number}")
+        self._transient_status(f"Данные Supabase обновлены. Героев: {number}")
         self._load_news()
         self._load_meta()
         self._refresh_overlay()
@@ -353,6 +355,17 @@ class MainWindow(QMainWindow):
         """Esc: скрыть оверлей; кнопка возвращается к «Запустить оверлей»."""
         if self._overlay_visible:
             self._apply_overlay_visibility(False)
+
+    def _on_overlay_closed_by_user(self) -> None:
+        """❌ в оверлее: лаунчер подхватывает состояние.
+
+        Вызываем тот же путь, что Esc и кнопка в лаунчере, — тогда
+        ``_overlay_visible``, текст ``_toggle_overlay`` и кнопка в панели
+        настроек синхронизируются без «двойного клика».
+        """
+        if not self._overlay_visible:
+            return
+        self._apply_overlay_visibility(False)
 
     def _open_overlay_settings(self) -> None:
         """Gear из оверлея / Ctrl+, — открыть вкладку настроек лаунчера.
@@ -399,22 +412,17 @@ class MainWindow(QMainWindow):
         """Панель настроек: запись через SettingsService в worker."""
         def job():
             service = self._ctx.settings_service
-            if kind == "position":
-                service.set_overlay_position(int(value[0]), int(value[1]))
-            elif kind == "opacity":
+            if kind == "opacity":
                 service.set_opacity(float(value))
             elif kind == "theme":
                 service.set_theme(str(value))
             elif kind == "click_through":
                 service.set_click_through(bool(value))
-            elif kind == "show_dire":
-                service.set_show_dire(bool(value))
             elif kind == "monitor":
                 service.set_monitor_index(int(value))
             return kind
 
         def done(done_kind: str) -> None:
-            self.status(f"Настройка сохранена: {done_kind}")
             if done_kind == "theme":
                 app = QApplication.instance()
                 if isinstance(app, QApplication):
