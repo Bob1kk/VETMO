@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from vetmo.domain.models import Hero
 from vetmo.services.settings_service import SettingsService
-from vetmo.ui.monitor import overlay_top_left, resolve_screen
+from vetmo.ui.monitor import resolve_screen
 from vetmo.ui.viewmodels.overlay_vm import OverlayEntry, OverlaySnapshot
 from vetmo.ui.widgets.hero_pick_dialog import HeroPickDialog
 from vetmo.ui.widgets.pick_slot import PickSlot
@@ -181,7 +181,7 @@ class OverlayColumn(QFrame):
             layout.addWidget(slot)
             self._slots[position] = slot
 
-        suggest_caption = QLabel("ПОДСКАЗКИ", self)
+        suggest_caption = QLabel("Подсказки", self)
         suggest_caption.setObjectName("overlaySuggestTitle")
         layout.addWidget(suggest_caption)
 
@@ -237,15 +237,12 @@ class OverlayColumn(QFrame):
             1 for slot in self._slots.values() if slot.hero() is not None)
         self._count.setText(f"{filled}/5")
 
-    def set_team_visible(self, visible: bool) -> None:
-        """Прячет/показывает колонку (Dire настраивается в лаунчере)."""
-        self.setVisible(visible)
-
 
 class OverlayWindow(QWidget):
     """Окно оверлея, привязываемое в OverlayService через getattr-API."""
 
     refresh_requested = Signal()
+    closed_by_user = Signal()
     settings_requested = Signal()
     pick_requested = Signal(str, int, int)  # team, position, hero_id
     clear_requested = Signal(str, int)      # team, position
@@ -288,13 +285,13 @@ class OverlayWindow(QWidget):
         self._lock_hint.setToolTip(
             "Мышь проходит сквозь оверлей. Отключите click-through в "
             "настройках лаунчера, чтобы пользоваться клетками и шестерёнкой.")
-        self._gear = QPushButton("⚙", self)
+        self._gear = QPushButton("❌", self)
         self._gear.setObjectName("overlayGear")
         self._gear.setFixedSize(24, 24)
         self._gear.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._gear.setToolTip("Настройки оверлея")
-        self._gear.clicked.connect(self.settings_requested.emit)
+        self._gear.setToolTip("Закрыть оверлей")
+        self._gear.clicked.connect(self._on_close_clicked)
         header_row.addWidget(brand)
         header_row.addStretch(1)
         header_row.addWidget(self._step)
@@ -352,6 +349,11 @@ class OverlayWindow(QWidget):
         """Скрывает оверлей (лаунчер остаётся видимым)."""
         self.hide()
 
+    def _on_close_clicked(self) -> None:
+        """❌: свернуть оверлей и попросить лаунчер синхронизировать состояние."""
+        self.hide_overlay()
+        self.closed_by_user.emit()
+
     def update_overlay(self) -> None:
         """Пинг обновления рекомендаций/шага (работу делает MainWindow)."""
         self.refresh_requested.emit()
@@ -386,12 +388,9 @@ class OverlayWindow(QWidget):
 
     def apply_snapshot(self, snapshot: OverlaySnapshot) -> None:
         """Применяет снимок OverlayViewModel: клетки, подсказки, шаг и прогресс."""
-        show_dire = self._settings.get_show_dire()
-        self._dire.set_team_visible(show_dire)
         self._current_picked = snapshot.picked
         self._radiant.fill(snapshot)
-        if show_dire:
-            self._dire.fill(snapshot)
+        self._dire.fill(snapshot)
         team = snapshot.next_team.upper()
         self._step.setText(
             f"{snapshot.step:02d}/{snapshot.total:02d} · {team}")
@@ -408,10 +407,6 @@ class OverlayWindow(QWidget):
     def _apply_settings(self) -> None:
         """Позиция, непрозрачность, click-through — из SettingsService."""
         was_visible = self.isVisible()
-        x, y = self._settings.get_overlay_position()
-        get_monitor = getattr(self._settings, "get_monitor_index", None)
-        monitor_index = int(get_monitor()) if callable(get_monitor) else -1
-        self.move(overlay_top_left(resolve_screen(monitor_index), x, y))
         self.setWindowOpacity(max(0.1, min(1.0, self._settings.get_opacity())))
         click_through = self._settings.get_click_through()
         flag = Qt.WindowType.WindowTransparentForInput

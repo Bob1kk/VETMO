@@ -1,10 +1,8 @@
-"""QSS-темы VETMO: THEME_DARK / THEME_LIGHT (R2, задача D — свежий рестайл).
+"""QSS-темы VETMO: тёмная и светлая.
 
-R2-штрихи: градиентные главные кнопки, чипсы-фильтры с активной заливкой
-акцентом, мягкие тени карточек (эффекты в widgets-коде), hover-состояния
-всем интерактивным, секционные заголовки («📰 НОВОСТИ ПАТЧЕЙ», «⚙ …»),
-компактная мета-таблица без сетки. Всё QSS — темы в Python-коде (T-020:
-PyInstaller .exe не теряет стили).
+Направление — «draft room»: тёплый графит с зеленоватым подтоном,
+один янтарный акцент, спокойные поверхности и техничная типографика.
+Без градиентов, свечений, эмодзи и uppercase-лейблов.
 """
 
 from string import Template
@@ -13,51 +11,51 @@ __all__ = ["THEME_DARK", "THEME_LIGHT", "theme_for"]
 
 
 _DARK: dict[str, str] = {
-    "bg": "#0F1218",
-    "bg_alt": "#141821",
-    "panel": "#171C26",
-    "panel_2": "#1E2431",
-    "panel_3": "#252D3C",
-    "text": "#EDF1F8",
-    "muted": "#8E99AD",
-    "border": "#2B3344",
-    "accent": "#5B8DEF",
-    "accent_hover": "#6E9CF2",
-    "accent_pressed": "#4A78D8",
-    "accent_soft": "#223354",
-    "on_accent": "#FFFFFF",
-    "danger": "#E35D6A",
-    "ok": "#43C59E",
-    "warning": "#E8B05A",
-    "input": "#11151D",
-    "scroll": "#394255",
-    "overlay_panel": "rgba(15, 18, 24, 235)",
-    "overlay_title": "#D7DDEA",
-    "shadow": "rgba(0, 0, 0, 120)",
+    "bg": "#0E120F",
+    "bg_alt": "#131914",
+    "panel": "#161D18",
+    "panel_2": "#1C241E",
+    "panel_3": "#253027",
+    "text": "#F0F1E8",
+    "muted": "#9AA69A",
+    "border": "#2C372E",
+    "accent": "#E7B24A",
+    "accent_hover": "#F1C465",
+    "accent_pressed": "#C69332",
+    "accent_soft": "#332A18",
+    "on_accent": "#1A1305",
+    "danger": "#E26D6D",
+    "ok": "#63C99A",
+    "warning": "#E7B24A",
+    "input": "#0B0F0C",
+    "scroll": "#3D4A3F",
+    "overlay_panel": "rgba(14, 18, 15, 238)",
+    "overlay_title": "#E8EADF",
+    "shadow": "rgba(0, 0, 0, 90)",
 }
 
 _LIGHT: dict[str, str] = {
-    "bg": "#EEF1F6",
-    "bg_alt": "#E7EBF2",
-    "panel": "#FFFFFF",
-    "panel_2": "#F3F5F9",
-    "panel_3": "#E9EDF4",
-    "text": "#172033",
-    "muted": "#667287",
-    "border": "#D6DCE6",
-    "accent": "#3E6FE0",
-    "accent_hover": "#5B8DEF",
-    "accent_pressed": "#315BC0",
-    "accent_soft": "#E4EBFC",
+    "bg": "#F4F1E8",
+    "bg_alt": "#ECE8DC",
+    "panel": "#FFFDF6",
+    "panel_2": "#F5F1E7",
+    "panel_3": "#EAE5D8",
+    "text": "#1F261F",
+    "muted": "#697367",
+    "border": "#DCD5C6",
+    "accent": "#B4741C",
+    "accent_hover": "#C98A2D",
+    "accent_pressed": "#8F5A12",
+    "accent_soft": "#F6E7C8",
     "on_accent": "#FFFFFF",
-    "danger": "#C93F4D",
-    "ok": "#21896B",
-    "warning": "#B87918",
+    "danger": "#C24F52",
+    "ok": "#2F8A63",
+    "warning": "#A86A12",
     "input": "#FFFFFF",
-    "scroll": "#C3C8D4",
-    "overlay_panel": "rgba(255, 255, 255, 244)",
-    "overlay_title": "#3A4150",
-    "shadow": "rgba(0, 0, 0, 40)",
+    "scroll": "#C8C1B4",
+    "overlay_panel": "rgba(255, 253, 246, 246)",
+    "overlay_title": "#384035",
+    "shadow": "rgba(29, 36, 29, 30)",
 }
 
 _TEMPLATE = Template(
@@ -78,24 +76,24 @@ QWidget:disabled {
 
 /* ---------- каркас лаунчера ---------- */
 QFrame#appHeader {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 $panel, stop:0.55 $panel_2, stop:1 $panel);
+    background: $panel;
     border: 1px solid $border;
-    border-radius: 16px;
+    border-bottom: 2px solid $accent;
+    border-radius: 12px;
 }
 QLabel#brandMark {
     background: transparent;
     border: none;
-    border-radius: 11px;
+    border-radius: 9px;
     color: $on_accent;
-    font-size: 18px;
-    font-weight: 800;
+    font-size: 17px;
+    font-weight: 600;
 }
 QLabel#brandTitle {
     color: $text;
-    font-size: 21px;
-    font-weight: 800;
-    letter-spacing: 1px;
+    font-family: 'Bahnschrift', 'Segoe UI';
+    font-size: 20px;
+    font-weight: 600;
     background: transparent;
 }
 QLabel#brandSubtitle {
@@ -106,17 +104,16 @@ QLabel#brandSubtitle {
 QLabel#headerPill {
     background: $panel_3;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 6px;
     color: $muted;
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    padding: 3px 9px;
+    font-weight: 500;
+    padding: 4px 8px;
 }
 QTabWidget#sidebarTabs::pane {
     background: $panel;
     border: 1px solid $border;
-    border-radius: 12px;
+    border-radius: 10px;
     top: -1px;
 }
 QTabBar::tab {
@@ -124,16 +121,21 @@ QTabBar::tab {
     border: none;
     border-bottom: 2px solid transparent;
     color: $muted;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
-    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 12px;
     margin-right: 2px;
 }
 QTabBar::tab:hover { color: $text; }
+
+QTabWidget#sidebarTabs::tab-bar {
+    alignment: center;
+}
+
 QTabBar::tab:selected {
     color: $text;
     border-bottom: 2px solid $accent;
+    /* Скругления убраны */
 }
 QTabWidget#sidebarTabs QFrame#panel {
     background: transparent;
@@ -142,36 +144,44 @@ QTabWidget#sidebarTabs QFrame#panel {
 }
 
 /* ---------- слои заголовков/бейджи ---------- */
-QLabel#h1 { font-size: 19px; font-weight: 700; }
+QLabel#h1 {
+    font-family: 'Bahnschrift', 'Segoe UI';
+    font-size: 19px;
+    font-weight: 600;
+}
 QLabel#h2 { font-size: 14px; font-weight: 600; }
-QLabel#metaTitle { font-size: 18px; font-weight: 800; background: transparent; }
+QLabel#metaTitle {
+    font-family: 'Bahnschrift', 'Segoe UI';
+    font-size: 19px;
+    font-weight: 600;
+    background: transparent;
+}
 QLabel#metaSubtitle { color: $muted; font-size: 11px; background: transparent; }
 QLabel#patchPill {
     background: $accent_soft;
     border: 1px solid $accent_pressed;
-    border-radius: 999px;
+    border-radius: 6px;
     color: $accent_hover;
     font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.5px;
-    padding: 4px 10px;
+    font-weight: 600;
+    padding: 4px 8px;
 }
 QFrame#statCard {
     background: $panel_2;
     border: 1px solid $border;
-    border-radius: 14px;
+    border-radius: 9px;
 }
 QLabel#statValue {
     color: $text;
-    font-size: 17px;
-    font-weight: 800;
+    font-family: 'Cascadia Mono', 'Consolas';
+    font-size: 18px;
+    font-weight: 600;
     background: transparent;
 }
 QLabel#statLabel {
     color: $muted;
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
+    font-weight: 500;
     background: transparent;
 }
 QLabel#countLabel { color: $muted; font-size: 11px; background: transparent; }
@@ -190,25 +200,23 @@ QLabel#stateError {
 QLabel#posBadge {
     background: $panel_3;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 6px;
     color: $text;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
 }
 QLabel#heroAttr { color: $muted; font-size: 10px; background: transparent; }
 QLabel#sectionTitle {
-    font-size: 11px;
-    font-weight: 700;
+    font-size: 12px;
+    font-weight: 600;
     color: $muted;
-    letter-spacing: 1px;
     background: transparent;
     padding: 2px 2px;
 }
 QLabel#sectionLabel {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     color: $muted;
-    letter-spacing: 0.6px;
     background: transparent;
 }
 QLabel#chipLabel {
@@ -221,8 +229,9 @@ QLabel#chipLabel {
 QLabel#muted { color: $muted; font-size: 12px; background: transparent; }
 QLabel#mutedSmall { color: $muted; font-size: 11px; background: transparent; }
 QLabel#delta, QLabel#deltaPos, QLabel#deltaNeg {
+    font-family: 'Cascadia Mono', 'Consolas';
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     background: transparent;
 }
 QLabel#deltaPos { color: $ok; }
@@ -230,10 +239,11 @@ QLabel#deltaNeg { color: $danger; }
 QLabel#nodata { color: $muted; font-size: 12px; background: transparent; }
 QLabel#metaHeroName {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     background: transparent;
 }
 QLabel#metaRate {
+    font-family: 'Cascadia Mono', 'Consolas';
     font-size: 12px;
     font-weight: 600;
     background: transparent;
@@ -261,18 +271,18 @@ QLabel#newsPlaceholder {
 QFrame#panel, QFrame#metaPanel {
     background: $panel;
     border: 1px solid $border;
-    border-radius: 16px;
+    border-radius: 10px;
 }
 QFrame#metaToolbar {
     background: $panel_2;
     border: 1px solid $border;
-    border-radius: 14px;
+    border-radius: 8px;
 }
 QFrame#newsList, QFrame#newsScroll { background: transparent; border: none; }
 QFrame#newsRow {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 10px;
+    border-radius: 7px;
 }
 QFrame#newsRow:hover {
     background: $panel_2;
@@ -281,7 +291,7 @@ QFrame#newsRow:hover {
 QFrame#heroCard {
     background: $panel;
     border: 1px solid $border;
-    border-radius: 12px;
+    border-radius: 9px;
 }
 QFrame#heroCard:hover {
     border: 1px solid $accent;
@@ -291,20 +301,21 @@ QLabel#cardReason { color: $accent; font-size: 11px; background: transparent; }
 QLabel#cardWr { color: $ok; font-size: 11px; font-weight: 600; }
 QLabel#cardEmpty { color: $muted; font-size: 11px; font-style: italic; }
 QLabel#iconPlaceholder {
-    border-radius: 17px;
+    border-radius: 12px;
     background: $panel_2;
     color: $muted;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 /* ---------- кнопки ---------- */
 QPushButton {
     background: $panel_2;
     border: 1px solid $border;
-    border-radius: 8px;
-    padding: 6px 14px;
+    border-radius: 7px;
+    padding: 7px 13px;
     color: $text;
+    font-weight: 500;
 }
 QPushButton:hover {
     background: $bg_alt;
@@ -322,15 +333,13 @@ QPushButton:disabled {
     color: $muted;
 }
 QPushButton#primary {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 $accent_hover, stop:1 $accent);
+    background: $accent;
     border: 1px solid $accent;
     color: $on_accent;
-    font-weight: 700;
+    font-weight: 600;
 }
 QPushButton#primary:hover {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 $accent, stop:1 $accent_hover);
+    background: $accent_hover;
     border: 1px solid $accent_hover;
 }
 QPushButton#primary:pressed {
@@ -338,27 +347,25 @@ QPushButton#primary:pressed {
 }
 QPushButton#primary:disabled {
     background: $accent_pressed;
-    color: rgba(255, 255, 255, 140);
+    color: rgba(255, 255, 255, 120);
 }
 QPushButton#bigOverlay {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 $accent_hover, stop:1 $accent);
+    background: $accent;
     border: 1px solid $accent;
     color: $on_accent;
-    border-radius: 10px;
+    border-radius: 8px;
     font-size: 13px;
-    font-weight: 700;
-    padding: 9px 18px;
+    font-weight: 600;
+    padding: 9px 16px;
 }
 QPushButton#bigOverlay:hover {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 $accent, stop:1 $accent_hover);
+    background: $accent_hover;
     border: 1px solid $accent_hover;
 }
 QPushButton#bigOverlay:pressed { background: $accent_pressed; }
 QPushButton#bigOverlay:disabled {
     background: $accent_pressed;
-    color: rgba(255, 255, 255, 140);
+    color: rgba(255, 255, 255, 120);
 }
 QPushButton#secondary {
     background: transparent;
@@ -374,9 +381,10 @@ QPushButton#headerGhost {
     background: transparent;
     border: 1px solid $border;
     color: $muted;
-    border-radius: 9px;
-    padding: 7px 12px;
+    border-radius: 7px;
+    padding: 8px 11px;
     font-size: 12px;
+    font-weight: 500;
 }
 QPushButton#headerGhost:hover {
     background: $panel_3;
@@ -388,8 +396,8 @@ QPushButton#headerGhost:hover {
 QPushButton#chip {
     background: $bg_alt;
     border: 1px solid transparent;
-    border-radius: 12px;
-    padding: 2px 12px;
+    border-radius: 7px;
+    padding: 4px 11px;
     font-size: 12px;
     color: $muted;
 }
@@ -408,8 +416,8 @@ QPushButton#chip:checked {
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     background: $input;
     border: 1px solid $border;
-    border-radius: 8px;
-    padding: 4px 8px;
+    border-radius: 6px;
+    padding: 5px 8px;
     selection-background-color: $accent;
     selection-color: $on_accent;
 }
@@ -462,8 +470,7 @@ QSlider::groove:horizontal {
     border-radius: 3px;
 }
 QSlider::sub-page:horizontal {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 $accent_pressed, stop:1 $accent);
+    background: $accent;
     border-radius: 3px;
 }
 QSlider::handle:horizontal {
@@ -504,10 +511,9 @@ QHeaderView::section {
     color: $muted;
     border: none;
     border-bottom: 1px solid $border;
-    padding: 7px 8px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.3px;
+    padding: 8px;
+    font-size: 11px;
+    font-weight: 600;
 }
 QListWidget {
     background: $panel;
@@ -593,8 +599,7 @@ QProgressBar {
     color: $muted;
 }
 QProgressBar::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 $accent_pressed, stop:1 $accent);
+    background: $accent;
     border-radius: 6px;
 }
 
@@ -603,7 +608,7 @@ QWidget#overlayRoot { background: transparent; }
 QFrame#overlayPanel {
     background: $overlay_panel;
     border: 1px solid $border;
-    border-radius: 16px;
+    border-radius: 11px;
 }
 QFrame#overlayHeader {
     background: transparent;
@@ -612,19 +617,18 @@ QFrame#overlayHeader {
 }
 QLabel#overlayBrand {
     color: $overlay_title;
+    font-family: 'Bahnschrift', 'Segoe UI';
     font-size: 13px;
-    font-weight: 800;
-    letter-spacing: 1px;
+    font-weight: 600;
 }
 QLabel#overlayStep {
     color: $accent_hover;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
 }
 QLabel#overlaySource {
     color: $muted;
     font-size: 9px;
-    letter-spacing: 0.4px;
 }
 QPushButton#overlayGear {
     background: $panel_2;
@@ -651,8 +655,7 @@ QProgressBar#overlayProgress {
     min-height: 4px;
 }
 QProgressBar#overlayProgress::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 $accent, stop:1 $accent_hover);
+    background: $accent;
     border-radius: 2px;
 }
 QFrame#overlayTeamRadiant, QFrame#overlayTeamDire {
@@ -664,8 +667,7 @@ QFrame#overlayTeamRadiant { border-left: 2px solid $ok; }
 QFrame#overlayTeamDire { border-left: 2px solid $danger; }
 QLabel#overlayTeamTitle {
     font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 1px;
+    font-weight: 600;
     background: transparent;
 }
 QLabel#overlayTeamTitle[team="radiant"] { color: $ok; }
@@ -673,7 +675,7 @@ QLabel#overlayTeamTitle[team="dire"] { color: $danger; }
 QLabel#overlayTeamCount {
     color: $muted;
     font-size: 9px;
-    font-weight: 700;
+    font-weight: 600;
     background: transparent;
 }
 QFrame#overlaySlot {
@@ -693,10 +695,10 @@ QFrame#overlaySlot[filled="true"]:hover { border: 1px solid $accent; }
 QLabel#overlaySlotBadge {
     background: $panel_3;
     border: 1px solid $border;
-    border-radius: 8px;
+    border-radius: 6px;
     color: $muted;
     font-size: 9px;
-    font-weight: 800;
+    font-weight: 600;
 }
 QLabel#overlaySlotName {
     color: $text;
@@ -707,10 +709,10 @@ QLabel#overlaySlotName {
 QPushButton#overlaySlotClear {
     background: transparent;
     border: none;
-    border-radius: 9px;
+    border-radius: 6px;
     color: $muted;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 600;
     padding: 0;
 }
 QPushButton#overlaySlotClear:hover {
@@ -720,15 +722,14 @@ QPushButton#overlaySlotClear:hover {
 QLabel#overlaySuggestTitle {
     color: $muted;
     font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 1px;
+    font-weight: 600;
     background: transparent;
     padding-top: 2px;
 }
 QLabel#overlaySuggestPos {
     color: $accent_hover;
     font-size: 9px;
-    font-weight: 700;
+    font-weight: 600;
     background: transparent;
 }
 QLabel#overlaySuggestHeroes {

@@ -6,7 +6,6 @@
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -15,12 +14,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
-
-from vetmo.ui.monitor import available_screens, screen_label
 
 
 class SettingsPanel(QFrame):
@@ -35,8 +31,7 @@ class SettingsPanel(QFrame):
 
     def __init__(
         self,
-        initial: dict,  # {position:(x,y), opacity:float, theme:str,
-        #                 click_through:bool, show_dire:bool}
+        initial: dict,
         app_version: str,
         parent: QWidget | None = None,
     ) -> None:
@@ -51,8 +46,6 @@ class SettingsPanel(QFrame):
     def _build_ui(self, app_version: str) -> None:
         title = QLabel("Настройки", self)
         title.setObjectName("metaTitle")
-        subtitle = QLabel("Оверлей и данные", self)
-        subtitle.setObjectName("metaSubtitle")
 
         # Позиция оверлея
         form = QFormLayout()
@@ -60,26 +53,9 @@ class SettingsPanel(QFrame):
         form.setContentsMargins(0, 0, 0, 0)
         form.setHorizontalSpacing(10)
         form.setVerticalSpacing(6)
-        self._pos_x = QSpinBox(self)
-        self._pos_x.setRange(0, 4096)
-        self._pos_x.setSuffix(" px")
-        self._pos_x.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._pos_x.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._pos_y = QSpinBox(self)
-        self._pos_y.setRange(0, 4096)
-        self._pos_y.setSuffix(" px")
-        self._pos_y.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._pos_y.setAlignment(Qt.AlignmentFlag.AlignRight)
-        form.addRow("Позиция X:", self._pos_x)
-        form.addRow("Позиция Y:", self._pos_y)
-
-        # Монитор: лаунчер и оверлей открываются на выбранном экране.
-        self._monitor = QComboBox(self)
-        self._monitor.setObjectName("filterCombo")
-        self._fill_monitors()
 
         # Непрозрачность
-        opacity_label = QLabel("Непрозрачность", self)
+        opacity_label = QLabel("Непрозрачность оверлея", self)
         self._opacity_value = QLabel(self)
         self._opacity_value.setObjectName("muted")
         opacity_row = QHBoxLayout()
@@ -94,14 +70,12 @@ class SettingsPanel(QFrame):
         self._theme = QComboBox(self)
         for label, code in self._THEME_LABELS:
             self._theme.addItem(label, code)
-
         # Флаги
         self._click_through = QCheckBox(
             "Прозрачный для клика (click-through)", self)
         self._click_through.setToolTip(
             "Мышь проходит сквозь оверлей. Шестерёнка в оверлее будет "
             "недоступна — настройки открываются из этого окна.")
-        self._show_dire = QCheckBox("Показать пики Dire", self)
 
         # Кнопки оверлея/синхронизации
         self._overlay_button = self._button(
@@ -122,18 +96,13 @@ class SettingsPanel(QFrame):
         layout.setContentsMargins(14, 14, 14, 12)
         layout.setSpacing(9)
         layout.addWidget(title)
-        layout.addWidget(subtitle)
         layout.addSpacing(2)
-        layout.addWidget(self._section("ОВЕРЛЕЙ"))
         layout.addLayout(form)
-        layout.addWidget(QLabel("Монитор:", self))
-        layout.addWidget(self._monitor)
         layout.addLayout(opacity_row)
         layout.addWidget(self._opacity)
         layout.addWidget(QLabel("Тема:", self))
         layout.addWidget(self._theme)
         layout.addWidget(self._click_through)
-        layout.addWidget(self._show_dire)
         layout.addWidget(self._overlay_button)
         layout.addSpacing(4)
         layout.addWidget(self._section("ДАННЫЕ"))
@@ -162,45 +131,21 @@ class SettingsPanel(QFrame):
     def _connect_signals(self) -> None:
         self._opacity.sliderReleased.connect(self._commit_opacity)
         self._opacity.valueChanged.connect(self._update_opacity_label)
-        self._pos_x.editingFinished.connect(self._commit_position)
-        self._pos_y.editingFinished.connect(self._commit_position)
         self._theme.activated.connect(self._commit_theme)
-        self._monitor.activated.connect(self._commit_monitor)
         self._click_through.toggled.connect(self._commit_click_through)
-        self._show_dire.toggled.connect(self._commit_show_dire)
-
-    def _fill_monitors(self) -> None:
-        """Список экранов: -1 — «второй, если есть»."""
-        self._monitor.clear()
-        screens = available_screens()
-        if len(screens) > 1:
-            self._monitor.addItem("Второй монитор (если есть)", -1)
-        for index, screen in enumerate(screens):
-            suffix = " (основной)" if index == 0 else ""
-            self._monitor.addItem(
-                screen_label(index, screen) + suffix, index)
-        if not screens:
-            self._monitor.addItem("Основной монитор", 0)
 
     # --- загрузка/выгрузка значений ---
     def load(self, initial: dict) -> None:
         """Применяет значения, не отправляя коммиты."""
         x, y = initial.get("position", (20, 20))
         opacity = int(round(float(initial.get("opacity", 0.85)) * 100))
-        self._pos_x.setValue(int(x))
-        self._pos_y.setValue(int(y))
         self._opacity.setValue(max(10, min(100, opacity)))
         theme = str(initial.get("theme", "dark"))
         index = self._theme.findData(theme)
         self._theme.setCurrentIndex(index if index >= 0 else 0)
-        monitor_index = int(initial.get("monitor", -1))
-        monitor_pos = self._monitor.findData(monitor_index)
-        if monitor_pos < 0:
-            monitor_pos = self._monitor.findData(-1)
-        self._monitor.setCurrentIndex(max(0, monitor_pos))
+
         self._click_through.setChecked(
             bool(initial.get("click_through", False)))
-        self._show_dire.setChecked(bool(initial.get("show_dire", True)))
 
     def set_sync_enabled(self, enabled: bool) -> None:
         """Вида кнопки синхронизации (busy-состояние в статусбаре)."""
@@ -219,9 +164,6 @@ class SettingsPanel(QFrame):
             "Supabase: не настроен · проверьте VETMO_SUPABASE_*")
 
     # --- коммиты (родитель делает запись в БД из worker) ---
-    def _commit_position(self) -> None:
-        self.settings_committed.emit(
-            "position", (self._pos_x.value(), self._pos_y.value()))
 
     def _commit_opacity(self) -> None:
         self.settings_committed.emit(
@@ -233,12 +175,7 @@ class SettingsPanel(QFrame):
     def _commit_theme(self, index: int) -> None:
         self.settings_committed.emit("theme", self._theme.itemData(index))
 
-    def _commit_monitor(self, index: int) -> None:
-        self.settings_committed.emit(
-            "monitor", int(self._monitor.itemData(index) or 0))
 
     def _commit_click_through(self, checked: bool) -> None:
         self.settings_committed.emit("click_through", checked)
 
-    def _commit_show_dire(self, checked: bool) -> None:
-        self.settings_committed.emit("show_dire", checked)

@@ -101,7 +101,11 @@ class DraftService:
             if hero_id in picked_heroes:
                 raise ValueError(
                     f"Герой {hero_id} уже пикнут (hero already picked)")
-            repo.add_pick(session_id, Pick(team=team, position=position, hero_id=hero_id), step)
+            repo.add_pick(
+                session_id,
+                Pick(team=expected_team, position=position, hero_id=hero_id),
+                step,
+            )
             loaded = repo.get_session(session_id)
             if loaded is None:
                 raise ValueError(f"Сессия драфта не найдена: {session_id}")

@@ -424,7 +424,7 @@ class SupabaseMetaService:
 
     @property
     def period_end(self) -> str | None:
-        """Фактическая последняя дата данных из STRATZ (например '2026-10-10')."""
+        """Фактическая последняя дата данных из ``vetmo_snapshots``."""
         return self._last_period_end
 
     def get_period(self) -> str | None:
@@ -489,6 +489,9 @@ class SupabaseMetaService:
         self._matchup_highlight_cache.clear()
         self._hero_rows_cache = None
         self._positions_cache.clear()
+        # Иначе после sync в приложении оставался старый «период данных»
+        # (например 21.10), пока процесс не перезапустят.
+        self._last_period_end = None
 
     # ------------------------------------------------------------- мета ----
     def get_meta_rows(
@@ -735,7 +738,7 @@ class SupabaseMetaService:
             # Порядок — по убыванию доли игр: первая позиция основная.
             row["positions"] = sorted(
                 details,
-                key=lambda pos: -(details[pos].pick_share or 0.0),
+                key=lambda pos: -(details[pos].pick_share or 0.0),  # type: ignore[arg-type]
             )
             if not row.get("position_details"):
                 row["position_details"] = {
@@ -746,7 +749,6 @@ class SupabaseMetaService:
                     }
                     for pos, stat in details.items()
                 }
-
     def _hero_rows(self) -> dict[int, dict[str, Any]]:
         """Каталог героев (id -> строка) для склейки с метой; кэш в памяти."""
         if self._hero_rows_cache is None:

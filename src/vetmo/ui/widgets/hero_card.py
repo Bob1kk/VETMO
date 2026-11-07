@@ -6,10 +6,9 @@ R2 (задача B): рич-тултип контрпиков по hover — л�
 """
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QCursor, QPixmap
+from PySide6.QtGui import QCursor, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QToolTip,
@@ -68,13 +67,6 @@ class HeroCard(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.addLayout(top, 1)
-
-        # мягкая тень карточки (задача D, дешёвый способ)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(12)
-        shadow.setOffset(0, 2)
-        shadow.setColor(QColor(0, 0, 0, 80))
-        self.setGraphicsEffect(shadow)
 
         icon_fetcher().loaded.connect(self._on_icon_loaded)
         self.set_empty()

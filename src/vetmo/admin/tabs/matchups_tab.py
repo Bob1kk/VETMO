@@ -38,9 +38,9 @@ if TYPE_CHECKING:
 _MIN_MATCHES = 500
 
 _BUCKETS: tuple[tuple[str, str], ...] = (
-    ("counter", "КОНТРПИКИ"),
-    ("good", "ХОРОШИЕ ПИКИ"),
-    ("synergy", "СВЯЗКИ"),
+    ("counter", "Контрпики"),
+    ("good", "Хорошие пики"),
+    ("synergy", "Связки"),
 )
 
 _HEADERS = ("#", "Герой", "Winrate", "Матчи", "Срез", "Выборка")
@@ -232,7 +232,7 @@ class MatchupsTab(QWidget):
 
         def fail(message: str) -> None:
             self._state.setText(f"Не удалось загрузить героев: {message}")
-            self._state.setStyleSheet("color: #E35D6A;")
+            self._state.setStyleSheet("color: #E26D6D;")
             self.status_message.emit(f"Матчапы: ошибка каталога ({message})")
 
         start_worker(self._ctx.repository.heroes, on_done=done, on_fail=fail)
@@ -276,7 +276,7 @@ class MatchupsTab(QWidget):
             for panel in self._panels.values():
                 panel.clear()
             self._state.setText(f"Ошибка загрузки матчапов: {message}")
-            self._state.setStyleSheet("color: #E35D6A;")
+            self._state.setStyleSheet("color: #E26D6D;")
             self.status_message.emit(f"Матчапы: ошибка ({message})")
 
         start_worker(

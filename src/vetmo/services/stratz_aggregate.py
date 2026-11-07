@@ -59,7 +59,7 @@ BANS_PER_MATCH = 10
 # Строки с меньшей выборкой сохраняем только как fallback, когда надёжных
 # матчапов не хватает до десяти.
 MATCHUP_RELIABLE_MIN = 500
-MATCHUP_MIN_MATCHES = 1
+MATCHUP_MIN_MATCHES = 30
 MATCHUP_HIGHLIGHTS_LIMIT = 10
 
 

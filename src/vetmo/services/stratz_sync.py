@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from vetmo.data.db import create_db
+from vetmo.data.db import create_db, migrate
 from vetmo.data.repositories.hero_repo import HeroRepository
 from vetmo.data.supabase_heroes import load_seed_heroes
 from vetmo.domain.rank_brackets import ALL_BRACKET, BASIC_BRACKETS
@@ -181,7 +181,12 @@ def _resolve_patch(gateway: SupabaseGateway, patch_version: str) -> int:
 def _previous_snapshot_map(
     gateway: SupabaseGateway, patch_id: int, snapshot_date: date,
 ) -> dict[tuple[int, int], dict[str, Any]]:
-    """Словарь (hero_id, rank_tier) -> предыдущий доступный снимок."""
+    """Словарь (hero_id, rank_tier) -> предыдущий снимок внутри окна 7 дней.
+
+    Дельты считаем только если предыдущий снимок не старше 7 дней. Иначе
+    сравнение было бы с устаревшим периодом (например, после долгого
+    простоя sync), и «изменение за неделю» показывало бы скачок за месяц.
+    """
     cutoff = (snapshot_date - timedelta(days=1)).isoformat()
     dates = gateway.select(
         "vetmo_snapshots", columns="snapshot_date",
@@ -195,6 +200,12 @@ def _previous_snapshot_map(
     if not dates:
         return {}
     prev_date = str(dates[0]["snapshot_date"])
+    try:
+        prev_day = date.fromisoformat(prev_date)
+    except ValueError:
+        return {}
+    if prev_day < snapshot_date - timedelta(days=DAILY_WINDOW_DAYS):
+        return {}
     rows = gateway.select(
         "vetmo_snapshots", columns="hero_id,rank_tier,win_rate,pick_rate",
         filters={
@@ -242,7 +253,12 @@ def sync_opendota_meta(
     stats.patch_version = None
     stats.patch_id = None
 
-    engine, sessionmaker = create_db("sqlite:///vetmo.db")
+    db_url = "sqlite:///vetmo.db"
+    engine, sessionmaker = create_db(db_url)
+    # Локальная SQLite — offline-кэш. Раньше sync предполагал, что она уже
+    # мигрирована; при запуске из другого CWD/чистой папки падал на
+    # ``no such table: user_settings``. Догоняем схему до head сами.
+    migrate(engine, db_url)
     client = OpenDotaClient(
         settings=sync,
         validator=ValidatorService(),
@@ -251,6 +267,58 @@ def sync_opendota_meta(
     )
 
     gateway = None if dry_run else _service_gateway(sync)
+    run_id: int | None = None
+    include_trigger_source = False
+    include_request_id = False
+    if gateway is not None:
+        include_trigger_source = _supports_column(gateway, "trigger_source")
+        include_request_id = _supports_column(gateway, "request_id")
+        try:
+            run = gateway.insert("vetmo_sync_runs", [{
+                "status": "running", "source": "opendota",
+                **_optional_field(
+                    include_trigger_source, "trigger_source", trigger,
+                ),
+                **_optional_field(include_request_id, "request_id", request_id),
+                "details": _trace_details(trigger, request_id),
+            }])
+            run_id = int(run[0]["id"]) if run else None
+        except Exception as exc:  # noqa: BLE001 - история не должна ломать sync
+            stats.errors.append(
+                f"sync_run: {type(exc).__name__}: {exc}"
+            )
+
+    def _finish_run(status: str, error: str | None = None) -> None:
+        """Закрыть запись прогона; ошибки истории не валят основной sync."""
+        if gateway is None or run_id is None:
+            return
+        try:
+            gateway.update("vetmo_sync_runs", {
+                "status": status,
+                "finished_at": datetime.now(UTC).isoformat(),
+                "patch_version": stats.patch_version,
+                "rows_meta": stats.rows_meta,
+                **_optional_field(
+                    include_trigger_source, "trigger_source", trigger,
+                ),
+                **_optional_field(
+                    include_request_id, "request_id", request_id,
+                ),
+                "details": {
+                    "source": "opendota",
+                    "period_end": stats.period,
+                    "rows_daily": stats.rows_daily,
+                    "errors": stats.errors[:20],
+                    "dry_run": dry_run,
+                    **_trace_details(trigger, request_id),
+                },
+                "error": error,
+            }, {"id": run_id})
+        except Exception as exc:  # noqa: BLE001 - не ломаем sync из-за статуса
+            logger.warning(
+                "Не удалось обновить vetmo_sync_runs #%s: %s",
+                run_id, type(exc).__name__,
+            )
 
     try:
         # --- Сырые heroStats (один запрос) ---
@@ -265,6 +333,7 @@ def sync_opendota_meta(
         client.sync_heroes(limit=0, data=raw)
 
         if gateway is None:
+            stats.period = datetime.now(UTC).date().isoformat()
             return stats
 
         # --- Патч в Supabase: OpenDota 7.41 -> текущий 7.41f (id=190) ---
@@ -288,6 +357,9 @@ def sync_opendota_meta(
         totals = {0: total_pub_pick, **tier_totals}
 
         snapshot_date = datetime.now(UTC).date()
+        # Период данных = последний день окна OpenDota. Admin показывает его
+        # в карточке «Период», не дожидаясь STRATZ (у него бывает лаг).
+        stats.period = snapshot_date.isoformat()
         daily_rows: list[dict[str, Any]] = []
         daily_by_hero: dict[int, list[dict[str, Any]]] = {}
         daily_total_picks: dict[date, int] = {}
@@ -383,7 +455,11 @@ def sync_opendota_meta(
                     "delta_win": None, "delta_pick": None, "delta_ban": None,
                     "ban_scope": None, "source": "opendota",
                 }
-                meta_rows.append(dict(base))
+                # updated_at есть только у vetmo_meta: без него upsert
+                # оставлял старую дату, и Admin считал мету устаревшей.
+                meta_rows.append({
+                    **base, "updated_at": datetime.now(UTC).isoformat(),
+                })
                 snapshot_rows.append({
                     "snapshot_date": snapshot_date.isoformat(), **base,
                 })
@@ -421,11 +497,13 @@ def sync_opendota_meta(
         )
         progress(f"  vetmo_snapshots: {len(snapshot_rows)} строк")
         stats.rows_meta = len(meta_rows)
+        _finish_run("partial" if stats.errors else "ok")
         return stats
 
     except Exception as exc:  # noqa: BLE001
         stats.errors.append(f"{type(exc).__name__}: {exc}")
         progress(f"ОШИБКА OpenDota: {type(exc).__name__}: {exc}")
+        _finish_run("error", error="; ".join(stats.errors[:5])[:1000] or None)
         raise
     return stats
 
@@ -444,15 +522,23 @@ def sync_stratz_matchups(
     request_id: str | None = None,
     progress=print,
     should_stop: Callable[[], bool] | None = None,
+    period_end: str | None = None,
+    meta_rows: int = 0,
 ) -> SyncStats:
     """Синхронизирует матчапы и баны из STRATZ GraphQL.
 
     Не трогает главную мету (win/pick/ban) — она теперь из OpenDota.
     Требует STRATZ токена (только в %APPDATA%/VETMO/secrets.env).
+
+    ``period_end`` — актуальная дата меты OpenDota. Пишем её в run, чтобы
+    Admin показывал свежесть данных, а не лаг STRATZ. ``meta_rows`` —
+    сколько строк меты уже записал OpenDota (для итоговой карточки run).
     """
     sync = SyncSettings.load()
     client = StratzClient(sync.stratz_token)
     stats = SyncStats(source="stratz")
+    stats.period = period_end
+    stats.rows_meta = meta_rows
     gateway = None if dry_run else _service_gateway(sync)
     include_trigger_source = (
         gateway is not None and _supports_column(gateway, "trigger_source")
@@ -683,6 +769,7 @@ def sync_all(
         stats.patch_id = od_stats.patch_id
         stats.rows_meta = od_stats.rows_meta
         stats.rows_daily = od_stats.rows_daily
+        stats.period = od_stats.period
         stats.errors.extend(od_stats.errors)
         if od_stats.errors:
             progress("OpenDota часть завершена с ошибками")
@@ -707,10 +794,14 @@ def sync_all(
                 request_id=request_id,
                 progress=progress,
                 should_stop=should_stop,
+                period_end=od_stats.period,
+                meta_rows=od_stats.rows_meta,
             )
             stats.rows_matchups = sz_stats.rows_matchups
             stats.slices = sz_stats.slices
             stats.errors.extend(sz_stats.errors)
+            if not stats.period:
+                stats.period = sz_stats.period
             if not stats.patch_version:
                 stats.patch_version = sz_stats.patch_version
                 stats.patch_id = sz_stats.patch_id

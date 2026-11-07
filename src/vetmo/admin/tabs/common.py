@@ -16,9 +16,9 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QStandardItem
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QPlainTextEdit, QTableView
 
-OK_COLOR = QColor("#43C59E")
-DANGER_COLOR = QColor("#E35D6A")
-WARNING_COLOR = QColor("#E8B05A")
+OK_COLOR = QColor("#63C99A")
+DANGER_COLOR = QColor("#E26D6D")
+WARNING_COLOR = QColor("#E7B24A")
 
 _STATUS_LABELS: dict[str, str] = {
     "running": "Выполняется",
@@ -121,7 +121,7 @@ def status_color(status: object) -> QColor:
         return WARNING_COLOR
     if key == "error":
         return DANGER_COLOR
-    return QColor("#8E99AD")
+    return QColor("#9AA69A")
 
 
 def pretty_json(value: object) -> str:
