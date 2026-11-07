@@ -738,7 +738,7 @@ class SupabaseMetaService:
             # Порядок — по убыванию доли игр: первая позиция основная.
             row["positions"] = sorted(
                 details,
-                key=lambda pos: -(details[pos].pick_share or 0.0),
+                key=lambda pos: -(details[pos].pick_share or 0.0),  # type: ignore[arg-type]
             )
             if not row.get("position_details"):
                 row["position_details"] = {
@@ -749,7 +749,6 @@ class SupabaseMetaService:
                     }
                     for pos, stat in details.items()
                 }
-
     def _hero_rows(self) -> dict[int, dict[str, Any]]:
         """Каталог героев (id -> строка) для склейки с метой; кэш в памяти."""
         if self._hero_rows_cache is None:
