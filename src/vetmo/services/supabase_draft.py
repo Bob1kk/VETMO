@@ -37,7 +37,7 @@ _PICK_RATE_WEIGHT = 0.05
 _COUNTER_WEIGHT = 2.5
 _SYNERGY_WEIGHT = 1.2
 # Матчапы с малой выборкой шумят: такие пары не учитываем.
-_MIN_MATCHUP_GAMES = 300
+_MIN_MATCHUP_GAMES = 200
 _MATCHUP_WEIGHT_CAP = 5000
 _TOOLTIP_ROWS = 5
 
@@ -358,8 +358,8 @@ class SupabaseDraftService:
                 # состояние могло измениться — перечитываем локально
                 state = self.get_state(session_id)
         assert state.id is not None
-        self._local_add_pick(int(state.id), Pick(
-            team=team, position=position, hero_id=hero_id), step)
+        self._local_add_pick(int(state.id),
+            Pick(team=team, position=position, hero_id=hero_id), step)
         return self._local_session(int(state.id))
 
     def add_pick_auto(

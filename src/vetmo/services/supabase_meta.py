@@ -31,7 +31,7 @@ _META_COLUMNS = (
 )
 
 # Порог, при котором метрика считается надёжной (совпадает с sync STRATZ).
-_MIN_RELIABLE_MATCHES = 50
+_MIN_RELIABLE_MATCHES = 30
 
 
 def _sample_reliable(row: dict[str, Any], match_count: int) -> bool:
