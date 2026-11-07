@@ -47,7 +47,7 @@ _CONFIRMATIONS: dict[str, str] = {
     ),
     MODE_DRY: (
         "Запустить dry-run?\n\n"
-        "Данные будут получены из STRATZ, но в Supabase не записываются."
+        "Данные будут получены из OpenDota, но в Supabase не записываются."
     ),
 }
 
@@ -132,7 +132,8 @@ class DashboardTab(QWidget):
         title = QLabel("Обзор", self)
         title.setObjectName("h1")
         subtitle = QLabel(
-            "Состояние reference-данных Supabase и запуск обновления из STRATZ.",
+            "Состояние reference-данных Supabase и запуск обновления "
+            "(мета — OpenDota, матчапы — STRATZ).",
             self,
         )
         subtitle.setObjectName("muted")
@@ -244,9 +245,16 @@ class DashboardTab(QWidget):
 
         status = run.get("status")
         time_value = run.get("finished_at") or run.get("started_at")
+        trigger_value = (
+            run.get("trigger_source")
+            or details.get("trigger_source")
+            or run.get("source")
+            or "—"
+        )
+        request_value = run.get("request_id") or details.get("request_id") or "—"
         self._cards["run"].set_value(
             status_text(status),
-            f"{format_datetime(time_value)} · {run.get('trigger_source') or run.get('source') or '—'}",
+            f"{format_datetime(time_value)} · {trigger_value}",
         )
         self._cards["fresh"].set_value(
             format_age(time_value),
@@ -274,8 +282,8 @@ class DashboardTab(QWidget):
             "конец окна 7 дней" if details.get("period_end") else "период не указан",
         )
         self._cards["trigger"].set_value(
-            str(run.get("trigger_source") or run.get("source") or "—"),
-            f"request_id: {run.get('request_id') or '—'}",
+            str(trigger_value),
+            f"request_id: {request_value}",
         )
 
     # --------------------------------------------------------------- sync --

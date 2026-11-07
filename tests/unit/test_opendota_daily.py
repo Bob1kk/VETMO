@@ -109,13 +109,14 @@ def test_trend_sum_matches_pub_totals() -> None:
 
 
 class _Gateway:
-    def __init__(self) -> None:
+    def __init__(self, prev_date: str = "2026-10-22") -> None:
+        self.prev_date = prev_date
         self.calls: list[dict[str, Any]] = []
 
     def select(self, table: str, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append({"table": table, **kwargs})
         if len(self.calls) == 1:
-            return [{"snapshot_date": "2026-10-22"}]
+            return [{"snapshot_date": self.prev_date}]
         return [{"hero_id": 1, "rank_tier": 0,
                  "win_rate": 50.0, "pick_rate": 10.0}]
 
@@ -129,3 +130,14 @@ def test_previous_snapshot_is_yesterday_not_week_ago() -> None:
     assert gateway.calls[0]["filters"]["snapshot_date"] == (
         "lte", "2026-10-22",
     )
+
+
+def test_previous_snapshot_outside_week_is_ignored() -> None:
+    """После долгого простоя не сравниваем с периодом месячной давности."""
+    gateway = _Gateway(prev_date="2026-10-10")
+
+    previous = _previous_snapshot_map(gateway, 190, date(2026, 10, 23))
+
+    assert previous == {}
+    # Второй select за строками снимка уже не нужен.
+    assert len(gateway.calls) == 1

@@ -424,7 +424,7 @@ class SupabaseMetaService:
 
     @property
     def period_end(self) -> str | None:
-        """Фактическая последняя дата данных из STRATZ (например '2026-10-10')."""
+        """Фактическая последняя дата данных из ``vetmo_snapshots``."""
         return self._last_period_end
 
     def get_period(self) -> str | None:
@@ -489,6 +489,9 @@ class SupabaseMetaService:
         self._matchup_highlight_cache.clear()
         self._hero_rows_cache = None
         self._positions_cache.clear()
+        # Иначе после sync в приложении оставался старый «период данных»
+        # (например 21.10), пока процесс не перезапустят.
+        self._last_period_end = None
 
     # ------------------------------------------------------------- мета ----
     def get_meta_rows(
