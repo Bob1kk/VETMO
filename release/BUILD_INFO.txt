@@ -1,11 +1,11 @@
-﻿VETMO 0.2.0
-Commit: ede2c5bedb10fcc54cb6fa120b333c9ad439a321
-Built:  2026-11-08 02:12:14 +03:00
+﻿VETMO 0.2.1
+Commit: 1a12b815468895216109064fafb68d88d157c9b7
+Built:  2026-11-08 03:50:36 +03:00
 Source: https://github.com/Bob1kk/VETMO
 
 Installers:
-  VETMO-Setup-0.2.0.exe        - user version (%LOCALAPPDATA%\Programs\VETMO)
-  VETMO-Admin-Setup-0.2.0.exe  - admin version (%LOCALAPPDATA%\Programs\VETMO Admin)
+  VETMO-Setup-0.2.1.exe        - user version (%LOCALAPPDATA%\Programs\VETMO)
+  VETMO-Admin-Setup-0.2.1.exe  - admin version (%LOCALAPPDATA%\Programs\VETMO Admin)
 
 Portable executables:
   VETMO.exe
