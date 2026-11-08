@@ -12,6 +12,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
 
+from vetmo.ui.widgets.icon_fetcher import icon_fetcher
+
 _ICON_SIZE = 34
 
 _PALETTE = (
@@ -136,5 +138,12 @@ def resolve_icon(
         return local, None
     url = icon_url or (cdn_icon_url(internal_name) or None)
     if url:
+        # Уже скачанная иконка лежит в памяти IconFetcher: берём её сразу,
+        # не показывая плейсхолдер. Это критично после пересборки карточек.
+        cached = icon_fetcher().cached(url)
+        if cached is not None:
+            scaled = scale_icon(cached, size)
+            if not scaled.isNull():
+                return scaled, None
         return placeholder_pixmap(name or "?", size), url
     return placeholder_pixmap(name or "?", size), None

@@ -24,8 +24,20 @@ class IconFetcher(QObject):
         self._in_flight: set[str] = set()
 
     def fetch(self, url: str | None) -> None:
-        """Запрашивает иконку; результат подписчики видят через loaded."""
-        if not url or url in self._cache or url in self._in_flight:
+        """Запрашивает иконку; результат подписчики видят через loaded.
+
+        Если пиксмап уже в кэше, ``loaded`` эмитится сразу: иначе после
+        пересборки карточек (открытие оверлея, «Обновить из БД») виджет
+        остался бы с плейсхолдером, потому что повторный запрос в сеть
+        не уходит.
+        """
+        if not url:
+            return
+        cached = self._cache.get(url)
+        if cached is not None:
+            self.loaded.emit(url, cached)
+            return
+        if url in self._in_flight:
             return
         self._in_flight.add(url)
         request = QNetworkRequest(QUrl(url))
