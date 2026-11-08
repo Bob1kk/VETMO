@@ -1,9 +1,9 @@
-﻿; VETMO — установщик пользовательской версии (Inno Setup 6.7+).
-; Сборка: ISCC.exe /DMyAppVersion=0.2.1 installer\VETMO.iss
+; VETMO — установщик пользовательской версии (Inno Setup 6.7+).
+; Сборка: ISCC.exe /DMyAppVersion=0.2.2 installer\VETMO.iss
 ; Требуется готовый dist\VETMO.exe (PyInstaller, см. vetmo.spec).
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.1"
+  #define MyAppVersion "0.2.2"
 #endif
 
 #define MyAppName "VETMO"
