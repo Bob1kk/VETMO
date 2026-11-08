@@ -1,19 +1,8 @@
-# -*- mode: python ; coding: utf-8 -*-
-"""Спека PyInstaller для VETMO Admin (T-114).
-
-One-file GUI-сборка точки входа src/vetmo/admin/main.py без консоли.
-Билд: .\\.venv\\Scripts\\python.exe -m PyInstaller vetmo-admin.spec
-Результат: dist/VETMO-Admin.exe (запуск на чистом Windows без Python).
-
-Секреты (``%APPDATA%/VETMO/secrets.env``) в бандл не попадают: Admin читает
-их только в рантайме, в этой спеке нет ни путей к ним, ни значений.
-"""
-
 import os
 
 ROOT = os.path.abspath(os.path.dirname(SPEC))
 
-# Тяжёлые библиотеки, не входящие в зависимости проекта, не тащим.
+
 _EXCLUDES = [
     "matplotlib",
     "tkinter",
@@ -37,8 +26,6 @@ a = Analysis(
     ["src/vetmo/admin/main.py"],
     pathex=[ROOT, os.path.join(ROOT, "src")],
     binaries=[],
-    # heroes_seed.json нужен supabase_heroes (его использует stratz_sync);
-    # иконки приложения кладём в корень бандла.
     datas=[
         (
             os.path.join(ROOT, "src", "vetmo", "data", "heroes_seed.json"),
